@@ -1,17 +1,14 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next';
+
+const isGithubPages = process.env.GITHUB_ACTIONS === 'true';
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  cacheComponents: true,
-  partialPrefetching: true,
-  turbopack: {
-    rules: {
-      "*.css": {
-        loaders: ["@tailwindcss/turbopack"],
-        as: "*.css",
-      },
-    },
+  output: 'export',
+  trailingSlash: true,
+  images: {
+    unoptimized: true,
   },
+  ...(isGithubPages ? { basePath: '/kingnotes' } : {}),
 };
 
 export default nextConfig;

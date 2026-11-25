@@ -114,11 +114,17 @@ export interface CanvasNodePosition extends SyncableEntity {
   workspaceId: string;
   cardId?: string;          // Presente se for um Knowledge Card
   groupId?: string | null;  // Agrupamento pai no canvas
-  nodeType: 'knowledgeCard' | 'group' | 'image';
+  nodeType: 'knowledgeCard' | 'group' | 'image' | 'text';
   label?: string;           // Título para grupos visuais
   color?: string;           // Cor principal / borda
-  bgColor?: string;         // Cor interna do grupo
-  bgOpacity?: 'transparent' | 'subtle' | 'tinted';
+  bgColor?: string;         // Cor interna do grupo / bloco de texto
+  bgOpacity?: 'transparent' | 'subtle' | 'tinted' | 'solid';
+  textJson?: Record<string, unknown>; // Conteúdo rico TipTap para Texto Livre
+  plainText?: string;                 // Texto plano para busca/promoção p/ Card
+  textColor?: string;                 // Cor base do texto livre
+  fontSize?: number;                  // Tamanho base da fonte (px)
+  textAlign?: 'left' | 'center' | 'right' | 'justify';
+  padding?: 'none' | 'sm' | 'md' | 'lg';
   borderStyle?: 'solid' | 'dashed' | 'dotted' | 'none';
   borderWidth?: 'thin' | 'medium' | 'thick';
   blobId?: string;          // Imagem solta salva no IndexedDB

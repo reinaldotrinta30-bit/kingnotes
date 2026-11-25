@@ -96,6 +96,14 @@ interface KnowledgeState {
     caption?: string;
   }) => Promise<string | null>;
   updateCanvasNode: (nodeId: string, patch: Partial<CanvasNodePosition>) => Promise<void>;
+  createCanvasText: (params: {
+    x: number;
+    y: number;
+    preset?: 'plain' | 'heading' | 'sticky' | 'callout';
+    initialText?: string;
+  }) => Promise<string | null>;
+  duplicateCanvasText: (nodeId: string) => Promise<string | null>;
+  promoteTextNodeToCard: (nodeId: string) => Promise<string | null>;
   updateCanvasEdge: (edgeId: string, patch: Partial<CanvasConnection>) => Promise<void>;
   deleteCanvasEdge: (edgeId: string) => Promise<void>;
   renameHierarchyItem: (id: string, title: string) => Promise<void>;
@@ -676,7 +684,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     await Promise.all([
       ...Array.from(cardIdsToRemove).map((cid) => repo.softDeleteCard(cid)),
       ...nodesToRemove
-        .filter((n) => n.nodeType === 'group' || n.nodeType === 'image')
+        .filter((n) => n.nodeType === 'group' || n.nodeType === 'image' || n.nodeType === 'text')
         .map((n) => repo.deleteCanvasNode(n.id)),
       ...Array.from(allEdgesToDelete).map((eid) => repo.deleteCanvasConnection(eid)),
     ]);
@@ -1334,6 +1342,263 @@ createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
       canvasNodes: s.canvasNodes.map((n) => (n.id === nodeId ? updated : n)),
     }));
     await repo.upsertCanvasNodes([updated]);
+  },
+
+  createCanvasText: async ({ x, y, preset = 'plain', initialText = '' }) => {
+    const workspaceId = get().activeWorkspaceId;
+    if (!workspaceId) return null;
+    const repo = getKnowledgeRepository();
+    const now = Date.now();
+
+    const presetStyles: Record<
+      'plain' | 'heading' | 'sticky' | 'callout',
+      Partial<CanvasNodePosition>
+    > = {
+      plain: {
+        width: 280,
+        height: 0,
+        bgColor: '#6366f1',
+        bgOpacity: 'transparent',
+        borderStyle: 'none',
+        borderWidth: 'thin',
+        borderRadius: 'xl',
+        color: '#6366f1',
+        fontSize: 15,
+        textAlign: 'left',
+        padding: 'sm',
+      },
+      heading: {
+        width: 380,
+        height: 0,
+        bgColor: '#6366f1',
+        bgOpacity: 'transparent',
+        borderStyle: 'none',
+        borderWidth: 'thin',
+        borderRadius: 'xl',
+        color: '#6366f1',
+        fontSize: 26,
+        textAlign: 'left',
+        padding: 'sm',
+      },
+      sticky: {
+        width: 260,
+        height: 180,
+        bgColor: '#f59e0b',
+        bgOpacity: 'tinted',
+        borderStyle: 'solid',
+        borderWidth: 'thin',
+        borderRadius: 'xl',
+        color: '#f59e0b',
+        fontSize: 14,
+        textAlign: 'left',
+        padding: 'md',
+      },
+      callout: {
+        width: 340,
+        height: 0,
+        bgColor: '#6366f1',
+        bgOpacity: 'subtle',
+        borderStyle: 'solid',
+        borderWidth: 'medium',
+        borderRadius: 'xl',
+        color: '#6366f1',
+        fontSize: 14,
+        textAlign: 'left',
+        padding: 'md',
+      },
+    };
+
+    const style = presetStyles[preset];
+    const textJson: Record<string, unknown> =
+      preset === 'heading'
+        ? {
+            type: 'doc',
+            content: [
+              {
+                type: 'heading',
+                attrs: { level: 1 },
+                content: initialText ? [{ type: 'text', text: initialText }] : [],
+              },
+            ],
+          }
+        : {
+            type: 'doc',
+            content: [
+              {
+                type: 'paragraph',
+                content: initialText ? [{ type: 'text', text: initialText }] : [],
+              },
+            ],
+          };
+
+    const textNode: CanvasNodePosition = {
+      id: `txt-${crypto.randomUUID()}`,
+      workspaceId,
+      nodeType: 'text',
+      ...style,
+      textJson,
+      plainText: initialText,
+      x: Math.round(x),
+      y: Math.round(y),
+      width: style.width ?? 280,
+      height: style.height ?? 0,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+      syncStatus: 'local_only',
+      version: 1,
+    };
+
+    await repo.upsertCanvasNodes([textNode]);
+    set((s) => ({ canvasNodes: [...s.canvasNodes, textNode] }));
+    return textNode.id;
+  },
+
+  duplicateCanvasText: async (nodeId) => {
+    const target = get().canvasNodes.find((n) => n.id === nodeId && n.nodeType === 'text');
+    if (!target) return null;
+    const repo = getKnowledgeRepository();
+    const now = Date.now();
+    const copy: CanvasNodePosition = {
+      ...target,
+      id: `txt-${crypto.randomUUID()}`,
+      x: Math.round(target.x + 36),
+      y: Math.round(target.y + 36),
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+      syncStatus: 'local_only',
+      version: 1,
+    };
+    await repo.upsertCanvasNodes([copy]);
+    set((s) => ({ canvasNodes: [...s.canvasNodes, copy] }));
+    return copy.id;
+  },
+
+  promoteTextNodeToCard: async (nodeId) => {
+    const state = get();
+    const textNode = state.canvasNodes.find((n) => n.id === nodeId && n.nodeType === 'text');
+    const workspaceId = state.activeWorkspaceId;
+    if (!textNode || !workspaceId) return null;
+
+    const repo = getKnowledgeRepository();
+    const now = Date.now();
+    const rawPlain = (textNode.plainText ?? '').trim();
+    const firstLine = rawPlain.split('\n').find((l) => l.trim().length > 0)?.trim() ?? '';
+    const title = firstLine ? firstLine.slice(0, 64) : 'Nota Promovida do Canvas';
+
+    const hexToCardColor = (hex?: string): KnowledgeCardMeta['color'] => {
+      switch ((hex ?? '').toLowerCase()) {
+        case '#f59e0b':
+          return 'amber';
+        case '#10b981':
+          return 'emerald';
+        case '#0ea5e9':
+          return 'sky';
+        case '#f43f5e':
+          return 'rose';
+        case '#6366f1':
+        case '#a855f7':
+          return 'violet';
+        default:
+          return 'default';
+      }
+    };
+
+    const defaultDiscipline =
+      state.hierarchy.find((h) => h.level === 'discipline')?.id ?? 'unassigned';
+    const defaultSubject = state.hierarchy.find((h) => h.level === 'subject')?.id ?? 'unassigned';
+
+    const cardId = `card-${crypto.randomUUID()}`;
+    const cardNodeId = `node-${crypto.randomUUID()}`;
+
+    const meta: KnowledgeCardMeta = {
+      id: cardId,
+      workspaceId,
+      disciplineId: defaultDiscipline,
+      subjectId: defaultSubject,
+      title,
+      excerpt: rawPlain ? rawPlain.slice(0, 220) : 'Clique para editar seu conhecimento...',
+      notes: '',
+      tags: [],
+      color:
+        textNode.bgOpacity && textNode.bgOpacity !== 'transparent'
+          ? hexToCardColor(textNode.bgColor ?? textNode.color)
+          : 'default',
+      isFavorite: false,
+      isPinned: false,
+      importance: 'normal',
+      reviewCount: 0,
+      lastReviewedAt: null,
+      nextReviewAt: null,
+      outgoingLinkIds: [],
+      searchTokens: buildSearchTokens([title, rawPlain]),
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+      syncStatus: 'local_only',
+      version: 1,
+    };
+
+    const content: KnowledgeCardContent = {
+      cardId,
+      tiptapJson: textNode.textJson ?? {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: rawPlain ? [{ type: 'text', text: rawPlain }] : [] }],
+      },
+      plainText: rawPlain || title,
+      flashcards: [],
+      attachments: [],
+      updatedAt: now,
+    };
+
+    const cardNode: CanvasNodePosition = {
+      id: cardNodeId,
+      workspaceId,
+      cardId,
+      nodeType: 'knowledgeCard',
+      x: textNode.x,
+      y: textNode.y,
+      width: Math.max(340, textNode.width || 350),
+      height: Math.max(220, textNode.height || 240),
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+      syncStatus: 'local_only',
+      version: 1,
+    };
+
+    // Transfere todas as setas ligadas ao texto livre para o novo Knowledge Card
+    const updatedEdges = state.canvasEdges.map((edge) => {
+      if (edge.sourceNodeId !== nodeId && edge.targetNodeId !== nodeId) return edge;
+      return {
+        ...edge,
+        sourceNodeId: edge.sourceNodeId === nodeId ? cardNodeId : edge.sourceNodeId,
+        targetNodeId: edge.targetNodeId === nodeId ? cardNodeId : edge.targetNodeId,
+        updatedAt: now,
+        version: edge.version + 1,
+        syncStatus: 'pending_push' as const,
+      };
+    });
+
+    const changedEdges = updatedEdges.filter(
+      (e, i) => e !== state.canvasEdges[i]
+    );
+
+    await Promise.all([
+      repo.saveCard(meta, content),
+      repo.upsertCanvasNodes([cardNode]),
+      repo.deleteCanvasNode(nodeId),
+      ...changedEdges.map((e) => repo.saveCanvasConnection(e)),
+    ]);
+
+    set((s) => ({
+      cardsById: { ...s.cardsById, [cardId]: meta },
+      canvasNodes: [...s.canvasNodes.filter((n) => n.id !== nodeId), cardNode],
+      canvasEdges: updatedEdges,
+    }));
+
+    return cardId;
   },
 
   renameCanvasGroup: async (groupId: string, label: string) => {

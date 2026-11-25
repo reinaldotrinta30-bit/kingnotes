@@ -53,6 +53,13 @@ import {
   FlipVertical2,
   RotateCcw,
   Link2,
+  Type,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  AlignJustify,
+  ArrowUpRightFromSquare,
+  Minus,
 } from 'lucide-react';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
 import { CanvasSpotlightMode, useUiStore } from '@/domains/ui/store/useUiStore';
@@ -66,6 +73,7 @@ import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryF
 import { KnowledgeCardNode } from './KnowledgeCardNode';
 import { GroupNode } from './GroupNode';
 import { CanvasImageNode } from './CanvasImageNode';
+import { CanvasTextNode } from './CanvasTextNode';
 import { EditableEdge } from './EditableEdge';
 import { OutlineEditorView } from './OutlineEditorView';
 import { DrawingLayer } from './DrawingLayer';
@@ -76,6 +84,7 @@ const nodeTypes = {
   knowledgeCard: KnowledgeCardNode,
   canvasGroup: GroupNode,
   canvasImage: CanvasImageNode,
+  canvasText: CanvasTextNode,
 };
 
 const edgeTypes = {
@@ -137,6 +146,8 @@ function CanvasInner() {
     setCanvasZoomedOut,
     croppingImageNodeId,
     setCroppingImageNodeId,
+    editingTextNodeId,
+    setEditingTextNodeId,
   } = useUiStore();
   const {
     activeWorkspaceId,
@@ -150,6 +161,9 @@ function CanvasInner() {
     createCanvasGroup,
     createCanvasImage,
     updateCanvasNode,
+    createCanvasText,
+    duplicateCanvasText,
+    promoteTextNodeToCard,
     persistNodePositions,
     addCanvasEdge,
     updateCanvasEdgesBulk,
@@ -170,6 +184,7 @@ function CanvasInner() {
   const [isLocked, setIsLocked] = useState(false);
   const [isDrawingMode, setIsDrawingMode] = useState(false);
   const [isDraggingImageFile, setIsDraggingImageFile] = useState(false);
+  const [isPlacingText, setIsPlacingText] = useState(false);
   const [liveViewport, setLiveViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 });
   const [openHeaderMenu, setOpenHeaderMenu] = useState<null | 'layout' | 'edge' | 'spotlight'>(null);
 
@@ -337,6 +352,21 @@ function CanvasInner() {
           continue;
         }
 
+        if (cn.nodeType === 'text') {
+          const isEditingThis = editingTextNodeId === cn.id;
+          next.push({
+            id: cn.id,
+            type: 'canvasText',
+            position: { x: cn.x, y: cn.y },
+            zIndex: isEditingThis ? 100 : 10,
+            selected: prev?.selected ?? false,
+            hidden: prev?.hidden ?? false,
+            style: { width: cn.width || 280 },
+            data: { node: cn },
+          });
+          continue;
+        }
+
         if (cn.nodeType === 'image') {
           next.push({
             id: cn.id,
@@ -386,7 +416,16 @@ function CanvasInner() {
       }
       return next;
     });
-  }, [canvasNodes, cardsById, selectedHierarchyId, inlineEditingCardId, openCard, saveViewport, setNodes]);
+  }, [
+    canvasNodes,
+    cardsById,
+    selectedHierarchyId,
+    inlineEditingCardId,
+    editingTextNodeId,
+    openCard,
+    saveViewport,
+    setNodes,
+  ]);
 
   useEffect(() => {
     setEdges((prevEdges) => {
@@ -509,8 +548,18 @@ function CanvasInner() {
     [nodes]
   );
 
+  const selectedTextNodes = useMemo(
+    () => nodes.filter((n) => n.selected && n.type === 'canvasText'),
+    [nodes]
+  );
+
   const selectedGroupableNodes = useMemo(
-    () => nodes.filter((n) => n.selected && (n.type === 'knowledgeCard' || n.type === 'canvasImage')),
+    () =>
+      nodes.filter(
+        (n) =>
+          n.selected &&
+          (n.type === 'knowledgeCard' || n.type === 'canvasImage' || n.type === 'canvasText')
+      ),
     [nodes]
   );
 
@@ -524,21 +573,41 @@ function CanvasInner() {
 
   const firstSelectedCard = selectedCardIds[0] ? cardsById[selectedCardIds[0]] : undefined;
   const activeGroupRecord =
-    selectedGroupNodes.length === 1 && selectedCardNodes.length === 0 && selectedImageNodes.length === 0
+    selectedGroupNodes.length === 1 &&
+    selectedCardNodes.length === 0 &&
+    selectedImageNodes.length === 0 &&
+    selectedTextNodes.length === 0
       ? canvasNodes.find((n) => n.id === selectedGroupNodes[0].id) ?? null
       : null;
 
   const activeImageRecord =
-    selectedImageNodes.length === 1 && selectedCardNodes.length === 0 && selectedGroupNodes.length === 0
+    selectedImageNodes.length === 1 &&
+    selectedCardNodes.length === 0 &&
+    selectedGroupNodes.length === 0 &&
+    selectedTextNodes.length === 0
       ? canvasNodes.find((n) => n.id === selectedImageNodes[0].id) ?? null
       : null;
 
+  const activeTextRecord =
+    selectedTextNodes.length === 1 &&
+    selectedCardNodes.length === 0 &&
+    selectedGroupNodes.length === 0 &&
+    selectedImageNodes.length === 0
+      ? canvasNodes.find((n) => n.id === selectedTextNodes[0].id) ?? null
+      : null;
+
   const canShowContextualBar =
-    !isLocked && !isOutlineMode && !inlineEditingCardId && !isDrawingMode && interactionMode !== 'focus';
+    !isLocked &&
+    !isOutlineMode &&
+    !inlineEditingCardId &&
+    !editingTextNodeId &&
+    !isDrawingMode &&
+    interactionMode !== 'focus';
 
   const showCardSelectionToolbar = canShowContextualBar && selectedCardNodes.length > 0;
   const showGroupToolbar = canShowContextualBar && Boolean(activeGroupRecord);
   const showImageToolbar = canShowContextualBar && Boolean(activeImageRecord);
+  const showTextToolbar = canShowContextualBar && Boolean(activeTextRecord);
 
   // Agrupar seleção atual (envolve automaticamente 2+ cards/imagens em um Grupo)
   const handleGroupSelectedItems = async () => {
@@ -576,7 +645,9 @@ function CanvasInner() {
   // Atalhos de teclado
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
-      if (isOutlineMode || activeCardId !== null || inlineEditingCardId !== null || isLocked) return;
+      if (isOutlineMode || activeCardId !== null || inlineEditingCardId !== null || editingTextNodeId !== null || isLocked) {
+        return;
+      }
 
       const target = e.target as HTMLElement | null;
       if (
@@ -586,6 +657,17 @@ function CanvasInner() {
           target.tagName === 'SELECT' ||
           target.isContentEditable)
       ) {
+        return;
+      }
+
+      if (e.key === 'Escape' && isPlacingText) {
+        setIsPlacingText(false);
+        return;
+      }
+
+      if (e.key.toLowerCase() === 't' && !e.ctrlKey && !e.metaKey && !e.altKey && !isDrawingMode) {
+        e.preventDefault();
+        setIsPlacingText((v) => !v);
         return;
       }
 
@@ -675,7 +757,11 @@ function CanvasInner() {
         const gy2 = gy1 + gH;
 
         const children = getNodes()
-          .filter((n) => (n.type === 'knowledgeCard' || n.type === 'canvasImage') && !n.hidden)
+          .filter(
+            (n) =>
+              (n.type === 'knowledgeCard' || n.type === 'canvasImage' || n.type === 'canvasText') &&
+              !n.hidden
+          )
           .filter((n) => {
             const nw = Number(n.measured?.width || n.style?.width || 350);
             const nh = Number(n.measured?.height || n.style?.height || 240);
@@ -965,6 +1051,15 @@ function CanvasInner() {
     pushHistorySnapshot();
     const pos = getSmartViewportPos(640, 360);
     await createCanvasGroup(pos.x, pos.y);
+  };
+
+  const handleCreateQuickText = async (
+    preset: 'plain' | 'heading' | 'sticky' | 'callout' = 'plain'
+  ) => {
+    pushHistorySnapshot();
+    const pos = getSmartViewportPos(280, 100);
+    const id = await createCanvasText({ x: pos.x, y: pos.y, preset });
+    if (id) setEditingTextNodeId(id);
   };
 
   if (isOutlineMode) {
@@ -1298,8 +1393,24 @@ function CanvasInner() {
             setCroppingImageNodeId(null);
             return;
           }
+          if (editingTextNodeId) {
+            setEditingTextNodeId(null);
+            return;
+          }
           if (inlineEditingCardId) {
             setInlineEditingCardId(null);
+            return;
+          }
+          if (isPlacingText && !isLocked && !isDrawingMode) {
+            pushHistorySnapshot();
+            const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+            const createdTextId = await createCanvasText({
+              x: Math.round(pos.x - 20),
+              y: Math.round(pos.y - 18),
+              preset: 'plain',
+            });
+            setIsPlacingText(false);
+            if (createdTextId) setEditingTextNodeId(createdTextId);
             return;
           }
           if (e.detail === 2 && !isLocked && !isDrawingMode) {
@@ -1349,6 +1460,8 @@ function CanvasInner() {
               ? 'rgba(99, 102, 241, 0.14)'
               : n.type === 'canvasImage'
               ? 'rgba(16, 185, 129, 0.55)'
+              : n.type === 'canvasText'
+              ? 'rgba(245, 158, 11, 0.65)'
               : theme === 'paper'
               ? 'rgba(99, 102, 241, 0.55)'
               : 'rgba(129, 140, 248, 0.45)'
@@ -1805,6 +1918,303 @@ function CanvasInner() {
           </Panel>
         )}
 
+        {/* AVISO DE POSICIONAMENTO DE TEXTO LIVRE (ATALHO T) */}
+        {isPlacingText && (
+          <Panel position="top-center" className="mt-3">
+            <div className="flex items-center gap-2 rounded-2xl border border-indigo-500/50 bg-[#161920]/95 px-3.5 py-2 text-xs font-medium text-indigo-200 shadow-2xl backdrop-blur-xl">
+              <Type className="h-3.5 w-3.5 text-indigo-400" />
+              Clique em qualquer lugar do Canvas para escrever
+              <button
+                type="button"
+                onClick={() => setIsPlacingText(false)}
+                className="ml-1 rounded-lg bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 hover:text-white"
+              >
+                Esc
+              </button>
+            </div>
+          </Panel>
+        )}
+
+        {/* BARRA CONTEXTUAL 4: TEXTO LIVRE SELECIONADO */}
+        {showTextToolbar && activeTextRecord && (
+          <Panel position="top-center" className="mt-3 !max-w-none">
+            <div className="kc-no-scrollbar flex w-max max-w-[95vw] flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap rounded-2xl border border-indigo-500/40 bg-[#161920]/95 px-3 py-1.5 shadow-2xl backdrop-blur-xl">
+              <span className="rounded-lg bg-amber-500/15 px-2 py-1 text-[11px] font-semibold text-amber-300">
+                Texto
+              </span>
+
+              {/* Presets em 1 clique */}
+              <div className="flex items-center gap-1">
+                {(
+                  [
+                    {
+                      id: 'plain',
+                      label: 'Solto',
+                      patch: {
+                        bgOpacity: 'transparent',
+                        borderStyle: 'none',
+                        fontSize: 15,
+                        padding: 'sm',
+                        height: 0,
+                      },
+                    },
+                    {
+                      id: 'heading',
+                      label: 'Título',
+                      patch: {
+                        bgOpacity: 'transparent',
+                        borderStyle: 'none',
+                        fontSize: 26,
+                        padding: 'sm',
+                        height: 0,
+                      },
+                    },
+                    {
+                      id: 'sticky',
+                      label: 'Post-it',
+                      patch: {
+                        bgColor: '#f59e0b',
+                        color: '#f59e0b',
+                        bgOpacity: 'tinted',
+                        borderStyle: 'solid',
+                        borderWidth: 'thin',
+                        borderRadius: 'xl',
+                        fontSize: 14,
+                        padding: 'md',
+                        height: 170,
+                      },
+                    },
+                    {
+                      id: 'callout',
+                      label: 'Destaque',
+                      patch: {
+                        bgColor: '#6366f1',
+                        color: '#6366f1',
+                        bgOpacity: 'subtle',
+                        borderStyle: 'solid',
+                        borderWidth: 'medium',
+                        borderRadius: 'xl',
+                        fontSize: 14,
+                        padding: 'md',
+                        height: 0,
+                      },
+                    },
+                  ] as Array<{ id: string; label: string; patch: Partial<CanvasNodePosition> }>
+                ).map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => updateCanvasNode(activeTextRecord.id, preset.patch)}
+                    className="rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1 text-[11px] font-medium text-zinc-300 transition hover:border-indigo-500/60 hover:text-white"
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="h-4 w-px bg-zinc-800" />
+
+              {/* Tamanho da Fonte */}
+              <div className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-[#0F1115] px-1 py-0.5">
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateCanvasNode(activeTextRecord.id, {
+                      fontSize: Math.max(11, (activeTextRecord.fontSize ?? 15) - 2),
+                    })
+                  }
+                  className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                  title="Diminuir fonte"
+                >
+                  <Minus className="h-3 w-3" />
+                </button>
+                <span className="w-7 text-center font-mono text-[11px] text-zinc-200">
+                  {activeTextRecord.fontSize ?? 15}
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateCanvasNode(activeTextRecord.id, {
+                      fontSize: Math.min(48, (activeTextRecord.fontSize ?? 15) + 2),
+                    })
+                  }
+                  className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                  title="Aumentar fonte"
+                >
+                  <Plus className="h-3 w-3" />
+                </button>
+              </div>
+
+              {/* Alinhamento do Bloco */}
+              <div className="flex items-center gap-0.5 rounded-lg border border-zinc-800 bg-[#0F1115] p-0.5">
+                {(
+                  [
+                    { id: 'left', icon: AlignLeft, title: 'Alinhar à esquerda' },
+                    { id: 'center', icon: AlignCenter, title: 'Centralizar' },
+                    { id: 'right', icon: AlignRight, title: 'Alinhar à direita' },
+                    { id: 'justify', icon: AlignJustify, title: 'Justificar' },
+                  ] as Array<{
+                    id: NonNullable<CanvasNodePosition['textAlign']>;
+                    icon: React.ComponentType<{ className?: string }>;
+                    title: string;
+                  }>
+                ).map(({ id, icon: Icon, title }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    title={title}
+                    onClick={() => updateCanvasNode(activeTextRecord.id, { textAlign: id })}
+                    className={`rounded p-1 transition ${
+                      (activeTextRecord.textAlign ?? 'left') === id
+                        ? 'bg-indigo-600/30 text-indigo-200'
+                        : 'text-zinc-400 hover:text-zinc-100'
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                  </button>
+                ))}
+              </div>
+
+              <div className="h-4 w-px bg-zinc-800" />
+
+              {/* Cor Base do Texto */}
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] font-semibold uppercase text-zinc-500">Cor</span>
+                {['', '#f4f4f5', '#18181b', '#818cf8', '#38bdf8', '#34d399', '#fbbf24', '#fb7185'].map(
+                  (hex) => (
+                    <button
+                      key={`tc-${hex || 'auto'}`}
+                      type="button"
+                      title={hex ? `Cor ${hex}` : 'Cor automática do tema'}
+                      onClick={() => updateCanvasNode(activeTextRecord.id, { textColor: hex || undefined })}
+                      className={`flex h-4 w-4 items-center justify-center rounded-full border text-[8px] font-bold text-zinc-400 transition hover:scale-125 ${
+                        (activeTextRecord.textColor ?? '') === hex
+                          ? 'scale-110 border-white'
+                          : 'border-zinc-700'
+                      }`}
+                      style={hex ? { backgroundColor: hex } : undefined}
+                    >
+                      {!hex && 'A'}
+                    </button>
+                  )
+                )}
+              </div>
+
+              <div className="h-4 w-px bg-zinc-800" />
+
+              {/* Fundo e Opacidade */}
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] font-semibold uppercase text-zinc-500">Fundo</span>
+                {GROUP_PALETTE.map((hex) => (
+                  <button
+                    key={`tbg-${hex}`}
+                    type="button"
+                    onClick={() =>
+                      updateCanvasNode(activeTextRecord.id, {
+                        bgColor: hex,
+                        color: hex,
+                        bgOpacity:
+                          (activeTextRecord.bgOpacity ?? 'transparent') === 'transparent'
+                            ? 'tinted'
+                            : activeTextRecord.bgOpacity,
+                      })
+                    }
+                    className={`h-4 w-4 rounded border transition hover:scale-125 ${
+                      (activeTextRecord.bgColor ?? '') === hex &&
+                      (activeTextRecord.bgOpacity ?? 'transparent') !== 'transparent'
+                        ? 'scale-110 border-white'
+                        : 'border-zinc-700'
+                    }`}
+                    style={{ backgroundColor: hex }}
+                    title="Cor de fundo"
+                  />
+                ))}
+              </div>
+
+              <select
+                value={activeTextRecord.bgOpacity ?? 'transparent'}
+                onChange={(e) =>
+                  updateCanvasNode(activeTextRecord.id, {
+                    bgOpacity: e.target.value as CanvasNodePosition['bgOpacity'],
+                  })
+                }
+                className="rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1 text-[11px] text-zinc-200 focus:outline-none"
+                title="Intensidade do fundo"
+              >
+                <option value="transparent">Fundo: 0%</option>
+                <option value="subtle">Fundo: Suave</option>
+                <option value="tinted">Fundo: Post-it</option>
+                <option value="solid">Fundo: Sólido</option>
+              </select>
+
+              <select
+                value={activeTextRecord.borderStyle ?? 'none'}
+                onChange={(e) =>
+                  updateCanvasNode(activeTextRecord.id, {
+                    borderStyle: e.target.value as CanvasNodePosition['borderStyle'],
+                  })
+                }
+                className="rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1 text-[11px] text-zinc-200 focus:outline-none"
+                title="Estilo da borda"
+              >
+                <option value="none">Sem borda</option>
+                <option value="solid">Borda sólida</option>
+                <option value="dashed">Tracejada</option>
+                <option value="dotted">Pontilhada</option>
+              </select>
+
+              <div className="h-4 w-px bg-zinc-800" />
+
+              {/* Promover para Knowledge Card */}
+              <button
+                type="button"
+                onClick={async () => {
+                  pushHistorySnapshot();
+                  const newCardId = await promoteTextNodeToCard(activeTextRecord.id);
+                  if (newCardId) {
+                    addToast({
+                      message: 'Texto promovido para Knowledge Card (setas mantidas!)',
+                      variant: 'success',
+                    });
+                  }
+                }}
+                className="flex items-center gap-1 rounded-lg bg-indigo-600/20 px-2.5 py-1 text-[11px] font-semibold text-indigo-300 transition hover:bg-indigo-600 hover:text-white"
+                title="Converter este texto livre em um Knowledge Card completo (entra em Revisão e Modo Livro)"
+              >
+                <ArrowUpRightFromSquare className="h-3.5 w-3.5" /> Virar Card
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  pushHistorySnapshot();
+                  await duplicateCanvasText(activeTextRecord.id);
+                }}
+                className="rounded-lg p-1.5 text-indigo-400 hover:bg-zinc-800"
+                title="Duplicar texto"
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  pushHistorySnapshot();
+                  await deleteCanvasSelection([activeTextRecord.id], []);
+                  addToast({
+                    message: 'Texto removido do canvas',
+                    action: { label: 'Desfazer', onClick: () => handleUndo() },
+                  });
+                }}
+                className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-500/15"
+                title="Excluir texto (Delete)"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </Panel>
+        )}
+
         {/* DOCK INFERIOR DE CRIAÇÃO RÁPIDA */}
         {!zenMode && (
           <Panel position="bottom-center" className="mb-4">
@@ -1828,6 +2238,17 @@ function CanvasInner() {
                 <BookOpenCheck className="h-3.5 w-3.5 text-emerald-400" /> Jurisprudência
               </button>
               <div className="mx-0.5 h-4 w-px bg-zinc-800" />
+              <button
+                onClick={() => handleCreateQuickText('plain')}
+                className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs transition ${
+                  isPlacingText
+                    ? 'bg-amber-500/20 text-amber-300'
+                    : 'text-zinc-300 hover:bg-zinc-800'
+                }`}
+                title="Adicionar texto livre no Canvas (ou aperte T e clique onde quiser)"
+              >
+                <Type className="h-3.5 w-3.5 text-amber-400" /> Texto
+              </button>
               <button
                 onClick={() => imageInputRef.current?.click()}
                 className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs text-zinc-300 transition hover:bg-zinc-800"

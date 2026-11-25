@@ -251,6 +251,18 @@ function renderTipTapNode(node: TipTapNode, key: string): React.ReactNode {
   }
 }
 
+export function RichDocRenderer({
+  doc,
+  className = '',
+}: {
+  doc?: Record<string, unknown> | null;
+  className?: string;
+}) {
+  const parsed = doc as unknown as TipTapNode | null;
+  if (!parsed?.content || parsed.content.length === 0) return null;
+  return <div className={`ProseMirror ${className}`}>{renderTipTapNode(parsed, 'free-text')}</div>;
+}
+
 interface CardRichPreviewProps {
   cardId: string;
   updatedAt: number;

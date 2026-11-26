@@ -13,6 +13,9 @@ import {
   StudyNotebook,
   StudySession,
   Workspace,
+  TopicShape,
+  EdgeLineStyle,
+  EdgeArrowType,
 } from '../types';
 import { buildSearchTokens } from '@/domains/search/utils/tokenizer';
 import { calculateSm2 } from '@/domains/review/utils/sm2';
@@ -144,6 +147,19 @@ interface KnowledgeState {
     initialText?: string;
   }) => Promise<string | null>;
   duplicateCanvasText: (nodeId: string) => Promise<string | null>;
+  createCanvasTopic: (params: {
+    x: number;
+    y: number;
+    label?: string;
+    shape?: TopicShape;
+    color?: string;
+    parentTopicId?: string | null;
+  }) => Promise<string | null>;
+  createSubtopic: (
+    parentNodeId: string,
+    options?: { label?: string; shape?: TopicShape; edgeLabel?: string }
+  ) => Promise<{ nodeId: string; edgeId: string } | null>;
+  duplicateCanvasTopic: (nodeId: string) => Promise<string | null>;
   promoteTextNodeToCard: (nodeId: string) => Promise<string | null>;
   convertCardToTextNode: (cardNodeId: string) => Promise<{
     textNodeId: string;
@@ -188,6 +204,10 @@ interface KnowledgeState {
       targetHandle?: string;
       edgeType?: 'smoothstep' | 'default' | 'straight';
       style?: 'solid' | 'dashed' | 'animated';
+      lineStyle?: EdgeLineStyle;
+      strokeWidth?: number;
+      arrowStart?: EdgeArrowType;
+      arrowEnd?: EdgeArrowType;
       color?: string;
     }
   ) => Promise<void>;
@@ -1460,6 +1480,12 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       sourceHandle: options?.sourceHandle,
       targetHandle: options?.targetHandle,
       edgeType: options?.edgeType ?? 'smoothstep',
+      routingMode: 'auto',
+      waypoints: [],
+      lineStyle: options?.lineStyle ?? (options?.style === 'dashed' ? 'dashed' : 'solid'),
+      strokeWidth: options?.strokeWidth ?? 2,
+      arrowStart: options?.arrowStart ?? 'none',
+      arrowEnd: options?.arrowEnd ?? 'arrowclosed',
       label,
       style: options?.style ?? 'solid',
       color: options?.color ?? '#6366f1',
@@ -1737,6 +1763,194 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       id: `txt-${crypto.randomUUID()}`,
       x: Math.round(target.x + 36),
       y: Math.round(target.y + 36),
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+      syncStatus: 'local_only',
+      version: 1,
+    };
+    await repo.upsertCanvasNodes([copy]);
+    set((s) => ({ canvasNodes: [...s.canvasNodes, copy] }));
+    return copy.id;
+  },
+
+  createCanvasTopic: async ({
+    x,
+    y,
+    label = 'Novo Tópico',
+    shape = 'rounded',
+    color = '#6366f1',
+    parentTopicId = null,
+  }) => {
+    const state = get();
+    const workspaceId = state.activeWorkspaceId;
+    if (!workspaceId) return null;
+    const repo = getKnowledgeRepository();
+    const scope = resolveOptionalHierarchyScope(state.hierarchy, state.selectedHierarchyId);
+    const now = Date.now();
+
+    const defaultDims: Record<TopicShape, { w: number; h: number }> = {
+      rect: { w: 200, h: 72 },
+      rounded: { w: 210, h: 74 },
+      square: { w: 150, h: 150 },
+      circle: { w: 150, h: 150 },
+      ellipse: { w: 210, h: 108 },
+      diamond: { w: 184, h: 132 },
+      capsule: { w: 210, h: 64 },
+      hexagon: { w: 200, h: 112 },
+    };
+
+    const dims = defaultDims[shape];
+    const topicNode: CanvasNodePosition = {
+      id: `top-${crypto.randomUUID()}`,
+      workspaceId,
+      nodeType: 'topic',
+      ...scope,
+      label,
+      color,
+      bgColor: color,
+      bgOpacity: 'tinted',
+      borderStyle: 'solid',
+      borderWidth: 'medium',
+      padding: 'sm',
+      textAlign: 'center',
+      fontSize: 15,
+      typography: { fontSize: 15, lineHeight: 1.3, paragraphSpacing: 4 },
+      topicConfig: {
+        shape,
+        shadow: 'md',
+        parentTopicId,
+        defaultEdgeStyle: {
+          edgeType: 'default',
+          color,
+          lineStyle: 'solid',
+        },
+      },
+      x: Math.round(x),
+      y: Math.round(y),
+      width: dims.w,
+      height: dims.h,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+      syncStatus: 'local_only',
+      version: 1,
+    };
+
+    await repo.upsertCanvasNodes([topicNode]);
+    set((s) => ({ canvasNodes: [...s.canvasNodes, topicNode] }));
+    return topicNode.id;
+  },
+
+  createSubtopic: async (parentNodeId, options) => {
+    const state = get();
+    const workspaceId = state.activeWorkspaceId;
+    const parent = state.canvasNodes.find((n) => n.id === parentNodeId);
+    if (!workspaceId || !parent) return null;
+
+    const repo = getKnowledgeRepository();
+    const now = Date.now();
+
+    // Calcula quantos filhos diretos já existem para distribuir verticalmente sem sobrepor
+    const existingChildrenCount = state.canvasEdges.filter(
+      (e) => e.sourceNodeId === parentNodeId
+    ).length;
+
+    const childShape: TopicShape = options?.shape ?? 'capsule';
+    const childColor = parent.color ?? '#6366f1';
+    const childW = childShape === 'diamond' ? 184 : childShape === 'circle' || childShape === 'square' ? 140 : 196;
+    const childH = childShape === 'diamond' ? 128 : childShape === 'circle' || childShape === 'square' ? 140 : 62;
+
+    const posX = Math.round(parent.x + (parent.width || 210) + 110);
+    const posY = Math.round(parent.y + existingChildrenCount * (childH + 28) - (existingChildrenCount > 0 ? 14 : 0));
+
+    const topicNode: CanvasNodePosition = {
+      id: `top-${crypto.randomUUID()}`,
+      workspaceId,
+      nodeType: 'topic',
+      disciplineId: parent.disciplineId ?? null,
+      subjectId: parent.subjectId ?? null,
+      subsubjectId: parent.subsubjectId ?? null,
+      topicId: parent.topicId ?? null,
+      label: options?.label ?? 'Subtópico',
+      color: childColor,
+      bgColor: childColor,
+      bgOpacity: 'subtle',
+      borderStyle: 'solid',
+      borderWidth: 'thin',
+      padding: 'sm',
+      textAlign: 'center',
+      fontSize: 14,
+      typography: { fontSize: 14, lineHeight: 1.3, paragraphSpacing: 4 },
+      topicConfig: {
+        shape: childShape,
+        shadow: 'sm',
+        parentTopicId: parent.id,
+        defaultEdgeStyle: parent.topicConfig?.defaultEdgeStyle ?? {
+          edgeType: 'default',
+          color: childColor,
+          lineStyle: 'solid',
+        },
+      },
+      x: posX,
+      y: posY,
+      width: childW,
+      height: childH,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+      syncStatus: 'local_only',
+      version: 1,
+    };
+
+    const edgePref = parent.topicConfig?.defaultEdgeStyle;
+    const edge: CanvasConnection = {
+      id: `edge-${crypto.randomUUID()}`,
+      workspaceId,
+      sourceNodeId: parent.id,
+      targetNodeId: topicNode.id,
+      sourceHandle: 's-right',
+      targetHandle: 't-left',
+      edgeType: edgePref?.edgeType ?? 'default',
+      routingMode: 'auto',
+      waypoints: [],
+      lineStyle: edgePref?.lineStyle ?? 'solid',
+      strokeWidth: 2,
+      arrowStart: 'none',
+      arrowEnd: 'arrowclosed',
+      label: options?.edgeLabel,
+      style: edgePref?.lineStyle === 'dashed' ? 'dashed' : 'solid',
+      color: edgePref?.color ?? childColor,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+      syncStatus: 'local_only',
+      version: 1,
+    };
+
+    await Promise.all([
+      repo.upsertCanvasNodes([topicNode]),
+      repo.saveCanvasConnection(edge),
+    ]);
+
+    set((s) => ({
+      canvasNodes: [...s.canvasNodes, topicNode],
+      canvasEdges: [...s.canvasEdges, edge],
+    }));
+
+    return { nodeId: topicNode.id, edgeId: edge.id };
+  },
+
+  duplicateCanvasTopic: async (nodeId) => {
+    const target = get().canvasNodes.find((n) => n.id === nodeId && n.nodeType === 'topic');
+    if (!target) return null;
+    const repo = getKnowledgeRepository();
+    const now = Date.now();
+    const copy: CanvasNodePosition = {
+      ...target,
+      id: `top-${crypto.randomUUID()}`,
+      x: Math.round(target.x + 40),
+      y: Math.round(target.y + 40),
       createdAt: now,
       updatedAt: now,
       deletedAt: null,

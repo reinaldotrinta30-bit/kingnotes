@@ -717,3 +717,8 @@ html[data-custom-font="active"] .kc-free-text-prose {
 .kc-edit-dimmed:hover {
   opacity: 0.85;
 }
+
+/* Mantém rótulos e ajustadores de conexão sempre acima da seta selecionada */
+.react-flow__edgelabel-renderer {
+  z-index: 1005 !important;
+}

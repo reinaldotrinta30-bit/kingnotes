@@ -252,6 +252,21 @@ export interface CanvasNodePosition extends SyncableEntity, HierarchyScope {
   height: number;
 }
 
+export interface EdgeLabelStyle {
+  preset?: 'auto' | 'neutral' | 'tinted' | 'solid' | 'transparent' | 'custom';
+  bgColor?: string;
+  textColor?: string;
+  borderColor?: string;
+  borderStyle?: 'solid' | 'dashed' | 'none';
+  fontSize?: number;
+  fontWeight?: 'normal' | 'medium' | 'bold';
+  textAlign?: 'left' | 'center' | 'right';
+  rotation?: number;    // Ângulo manual em graus (-180 a 180)
+  autoRotate?: boolean; // Alinha automaticamente ao ângulo do segmento da seta
+  width?: number;       // Largura manual em px (undefined = automático)
+  height?: number;      // Altura manual em px (undefined = automático)
+}
+
 export interface CanvasConnection extends SyncableEntity {
   workspaceId: string;
   sourceNodeId: string;
@@ -266,6 +281,8 @@ export interface CanvasConnection extends SyncableEntity {
   arrowStart?: EdgeArrowType;
   arrowEnd?: EdgeArrowType;
   label?: string;
+  labelPosition?: number; // Posição normalizada ao longo da conexão (0.08 a 0.92)
+  labelStyle?: EdgeLabelStyle;
   labelOffset?: { x: number; y: number };
   style: 'solid' | 'dashed' | 'animated';
   color?: string;

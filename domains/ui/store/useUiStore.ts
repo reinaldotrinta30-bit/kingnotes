@@ -76,6 +76,12 @@ interface UiState {
   setCroppingImageNodeId: (nodeId: string | null) => void;
   editingTextNodeId: string | null;
   setEditingTextNodeId: (nodeId: string | null) => void;
+  editingTopicNodeId: string | null;
+  setEditingTopicNodeId: (nodeId: string | null) => void;
+  selectedEdgeLabelId: string | null;
+  setSelectedEdgeLabelId: (edgeId: string | null) => void;
+  editingEdgeLabelId: string | null;
+  setEditingEdgeLabelId: (edgeId: string | null) => void;
   editorPresentation: EditorPresentationMode;
   setEditorPresentation: (mode: EditorPresentationMode) => void;
   toggleEditorPresentation: () => void;
@@ -139,6 +145,9 @@ export const useUiStore = create<UiState>((set, get) => ({
   isCanvasZoomedOut: false,
   croppingImageNodeId: null,
   editingTextNodeId: null,
+  editingTopicNodeId: null,
+  selectedEdgeLabelId: null,
+  editingEdgeLabelId: null,
   editorPresentation: 'expanded',
   hasUnsavedEditorChanges: false,
 
@@ -224,7 +233,10 @@ export const useUiStore = create<UiState>((set, get) => ({
   setCanvasZoomedOut: (isCanvasZoomedOut) =>
     set((s) => (s.isCanvasZoomedOut === isCanvasZoomedOut ? s : { isCanvasZoomedOut })),
   setCroppingImageNodeId: (croppingImageNodeId) => set({ croppingImageNodeId }),
-  setEditingTextNodeId: (editingTextNodeId) => set({ editingTextNodeId }),
+ setEditingTextNodeId: (editingTextNodeId) => set({ editingTextNodeId }),
+  setEditingTopicNodeId: (editingTopicNodeId) => set({ editingTopicNodeId }),
+  setSelectedEdgeLabelId: (selectedEdgeLabelId) => set({ selectedEdgeLabelId }),
+  setEditingEdgeLabelId: (editingEdgeLabelId) => set({ editingEdgeLabelId }),
   setEditorPresentation: (editorPresentation) => set({ editorPresentation }),
   toggleEditorPresentation: () =>
     set((s) => ({
@@ -235,7 +247,10 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({
       inlineEditingCardId: null,
       editingTextNodeId: null,
+      editingTopicNodeId: null,
       croppingImageNodeId: null,
+      selectedEdgeLabelId: null,
+      editingEdgeLabelId: null,
       hasUnsavedEditorChanges: false,
     }),
 

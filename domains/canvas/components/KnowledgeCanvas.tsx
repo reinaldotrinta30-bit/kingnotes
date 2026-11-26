@@ -61,6 +61,13 @@ import {
   ArrowUpRightFromSquare,
   Minimize2,
   FileType,
+  Shapes,
+  GitBranch,
+  Tag,
+  Bold,
+  ArrowLeft,
+  Wand2,
+  Pencil,
   Minus,
 } from 'lucide-react';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
@@ -70,6 +77,10 @@ import {
   CanvasNodePosition,
   CanvasStroke,
   KnowledgeCardMeta,
+  TopicShape,
+  EdgeLineStyle,
+  EdgeArrowType,
+  EdgeLabelStyle,
 } from '@/domains/knowledge/types';
 import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryFactory';
 import { KnowledgeCardNode } from './KnowledgeCardNode';
@@ -77,11 +88,13 @@ import { GroupNode } from './GroupNode';
 import { CanvasImageNode } from './CanvasImageNode';
 import { CanvasTextNode } from './CanvasTextNode';
 import { PanoramaSectionNode } from './PanoramaSectionNode';
+import { CanvasTopicNode } from './CanvasTopicNode';
 import { TypographyPopover } from './TypographyPopover';
 import { CalloutCustomizerPopover } from './CalloutCustomizerPopover';
 import {
   DEFAULT_CARD_TYPOGRAPHY,
   DEFAULT_TEXT_TYPOGRAPHY,
+  DEFAULT_TOPIC_TYPOGRAPHY,
   resolveCardCallout,
 } from '@/domains/knowledge/utils/defaults';
 import {
@@ -104,6 +117,7 @@ const nodeTypes = {
   canvasImage: CanvasImageNode,
   canvasText: CanvasTextNode,
   panoramaSection: PanoramaSectionNode,
+  canvasTopic: CanvasTopicNode,
 };
 
 const edgeTypes = {
@@ -141,6 +155,21 @@ const SPOTLIGHT_OPTIONS: Array<{ id: CanvasSpotlightMode; label: string }> = [
 
 const QUICK_STICKERS = ['💡', '⚠️', '📌', '🧠', '✅', '⚖️', '🎯'];
 
+function computeBestEdgeHandles(sourceNode: Node, targetNode: Node) {
+  const sW = Number(sourceNode.measured?.width || sourceNode.style?.width || 350);
+  const sH = Number(sourceNode.measured?.height || sourceNode.style?.height || 240);
+  const tW = Number(targetNode.measured?.width || targetNode.style?.width || 350);
+  const tH = Number(targetNode.measured?.height || targetNode.style?.height || 240);
+
+  const dx = targetNode.position.x + tW / 2 - (sourceNode.position.x + sW / 2);
+  const dy = targetNode.position.y + tH / 2 - (sourceNode.position.y + sH / 2);
+
+  if (Math.abs(dx) > Math.abs(dy)) {
+    return dx > 0 ? { s: 's-right', t: 't-left' } : { s: 's-left', t: 't-right' };
+  }
+  return dy > 0 ? { s: 's-bottom', t: 't-top' } : { s: 's-top', t: 't-bottom' };
+}
+
 function CanvasInner() {
   const { screenToFlowPosition, getNodes, getEdges, zoomIn, zoomOut, getViewport, setViewport } =
     useReactFlow();
@@ -168,6 +197,12 @@ function CanvasInner() {
     setCroppingImageNodeId,
     editingTextNodeId,
     setEditingTextNodeId,
+    editingTopicNodeId,
+    setEditingTopicNodeId,
+    selectedEdgeLabelId,
+    setSelectedEdgeLabelId,
+    editingEdgeLabelId,
+    setEditingEdgeLabelId,
   } = useUiStore();
   const {
     activeWorkspaceId,
@@ -186,6 +221,11 @@ function CanvasInner() {
     updateCanvasNode,
     createCanvasText,
     duplicateCanvasText,
+    createCanvasTopic,
+    createSubtopic,
+    duplicateCanvasTopic,
+    updateCanvasEdge,
+    deleteCanvasEdge,
     promoteTextNodeToCard,
     convertCardToTextNode,
     undoConvertCardToText,
@@ -214,7 +254,7 @@ function CanvasInner() {
   const [liveViewport, setLiveViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 });
   const [openHeaderMenu, setOpenHeaderMenu] = useState<null | 'layout' | 'edge' | 'spotlight'>(null);
 
-  const [globalEdgeType, setGlobalEdgeType] = useState<'smoothstep' | 'default'>('smoothstep');
+  const [globalEdgeType, setGlobalEdgeType] = useState<'smoothstep' | 'default' | 'straight'>('smoothstep');
   const [globalAnimated, setGlobalAnimated] = useState(false);
   const [globalColor, setGlobalColor] = useState('#6366f1');
 
@@ -289,6 +329,48 @@ function CanvasInner() {
     setCanUndo(true);
     setCanRedo(false);
   }, []);
+
+  const handleQuickSubtopic = useCallback(
+    async (
+      parentId: string,
+      options?: { label?: string; shape?: TopicShape; edgeLabel?: string }
+    ) => {
+      pushHistorySnapshot();
+      const created = await createSubtopic(parentId, options);
+      if (created) {
+        setEditingTopicNodeId(created.nodeId);
+      }
+    },
+    [pushHistorySnapshot, createSubtopic, setEditingTopicNodeId]
+  );
+
+  // Restaura uma conexão editada manualmente para o melhor caminho automático (recalculando os lados ideais)
+  const handleResetEdgeToAuto = useCallback(
+    async (edgeId: string) => {
+      const targetEdge = useKnowledgeStore
+        .getState()
+        .canvasEdges.find((e) => e.id === edgeId);
+      if (!targetEdge) return;
+
+      pushHistorySnapshot();
+      const allNodes = getNodes();
+      const srcNode = allNodes.find((n) => n.id === targetEdge.sourceNodeId);
+      const tgtNode = allNodes.find((n) => n.id === targetEdge.targetNodeId);
+      const best = srcNode && tgtNode ? computeBestEdgeHandles(srcNode, tgtNode) : null;
+
+      await updateCanvasEdge(edgeId, {
+        routingMode: 'auto',
+        waypoints: [],
+        ...(best ? { sourceHandle: best.s, targetHandle: best.t } : {}),
+      });
+
+      addToast(
+        { message: 'Conexão restaurada para o melhor caminho automático', variant: 'success' },
+        2400
+      );
+    },
+    [pushHistorySnapshot, getNodes, updateCanvasEdge, addToast]
+  );
 
   const handleUndo = useCallback(async () => {
     const prev = historyRef.current.past.pop();
@@ -480,7 +562,7 @@ function CanvasInner() {
         }
       }
 
-      const isAnyInlineEditing = Boolean(inlineEditingCardId || editingTextNodeId);
+      const isAnyInlineEditing = Boolean(inlineEditingCardId || editingTextNodeId || editingTopicNodeId);
 
       for (const cn of canvasNodes) {
         const prev = prevMap.get(cn.id);
@@ -515,6 +597,23 @@ function CanvasInner() {
             hidden: prev?.hidden ?? false,
             style: { width: cn.width || 280 },
             data: { node: cn },
+          });
+          continue;
+        }
+
+        if (cn.nodeType === 'topic') {
+          if (!matchesHierarchyContext(cn, selectedHierarchyId, hierarchy)) continue;
+          const isEditingThis = editingTopicNodeId === cn.id;
+          next.push({
+            id: cn.id,
+            type: 'canvasTopic',
+            position: displayPos,
+            zIndex: isEditingThis ? 100 : 12,
+            className: isAnyInlineEditing && !isEditingThis ? 'kc-edit-dimmed' : undefined,
+            selected: prev?.selected ?? false,
+            hidden: prev?.hidden ?? false,
+            style: { width: cn.width || 210, height: cn.height || 74 },
+            data: { node: cn, onQuickSubtopic: handleQuickSubtopic },
           });
           continue;
         }
@@ -578,6 +677,8 @@ function CanvasInner() {
     panorama,
     inlineEditingCardId,
     editingTextNodeId,
+    editingTopicNodeId,
+    handleQuickSubtopic,
     openCard,
     saveViewport,
     setNodes,
@@ -603,36 +704,56 @@ function CanvasInner() {
       const prevMap = new Map(prevEdges.map((e) => [e.id, e]));
       return canvasEdges
         .filter((e) => visibleNodeIds.has(e.sourceNodeId) && visibleNodeIds.has(e.targetNodeId))
-        .map((e) => ({
-          id: e.id,
-          source: e.sourceNodeId,
-          target: e.targetNodeId,
-          sourceHandle: e.sourceHandle,
-          targetHandle: e.targetHandle,
-          type: 'editable',
-          data: {
-            pathStyle: e.edgeType ?? 'smoothstep',
-            edgeStyle: e.style,
-            color: e.color ?? '#6366f1',
-          },
-          label: e.label,
-          animated: e.style === 'animated',
-          selected: prevMap.get(e.id)?.selected ?? false,
-          hidden: prevMap.get(e.id)?.hidden ?? false,
-          style: {
-            stroke: e.color ?? '#6366f1',
-            strokeWidth: e.strokeWidth ?? 1.75,
-            strokeDasharray: e.style === 'dashed' ? '5 5' : undefined,
-          },
-        }));
+        .map((e) => {
+          const srcOff = panorama.nodeOffsets.get(e.sourceNodeId);
+          const tgtOff = panorama.nodeOffsets.get(e.targetNodeId);
+          const sameOffset =
+            srcOff && tgtOff && srcOff.dx === tgtOff.dx && srcOff.dy === tgtOff.dy
+              ? srcOff
+              : { dx: 0, dy: 0 };
+
+          return {
+            id: e.id,
+            source: e.sourceNodeId,
+            target: e.targetNodeId,
+            sourceHandle: e.sourceHandle,
+            targetHandle: e.targetHandle,
+            type: 'editable',
+            data: {
+              pathStyle: e.edgeType ?? 'smoothstep',
+              edgeStyle: e.style,
+              lineStyle: e.lineStyle ?? (e.style === 'dashed' ? 'dashed' : 'solid'),
+              strokeWidth: e.strokeWidth ?? 2,
+              arrowStart: e.arrowStart ?? 'none',
+              arrowEnd: e.arrowEnd ?? 'arrowclosed',
+              routingMode: e.routingMode ?? 'auto',
+              waypoints: e.waypoints ?? [],
+              labelPosition: e.labelPosition,
+              labelStyle: e.labelStyle,
+              onResetToAuto: handleResetEdgeToAuto,
+              labelOffset: e.labelOffset,
+              projectionOffset: sameOffset,
+              color: e.color ?? '#6366f1',
+            },
+            label: e.label,
+            animated: e.style === 'animated',
+            selected: prevMap.get(e.id)?.selected ?? false,
+            hidden: prevMap.get(e.id)?.hidden ?? false,
+            style: {
+              stroke: e.color ?? '#6366f1',
+              strokeWidth: e.strokeWidth ?? 2,
+            },
+          };
+        });
     });
-  }, [canvasEdges, canvasNodes, cardsById, hierarchy, selectedHierarchyId, setEdges]);
+  }, [canvasEdges, canvasNodes, cardsById, hierarchy, selectedHierarchyId, panorama, handleResetEdgeToAuto, setEdges]);
 
   // Foco e Zoom Automático durante a edição inline + restauração consciente do viewport
   const preEditViewportRef = useRef<Viewport | null>(null);
   const manualMoveDuringEditRef = useRef(false);
   const isProgrammaticMoveRef = useRef(false);
   const activeEditTargetNodeId = useMemo(() => {
+    if (editingTopicNodeId) return editingTopicNodeId;
     if (editingTextNodeId) return editingTextNodeId;
     if (inlineEditingCardId) {
       return (
@@ -642,7 +763,7 @@ function CanvasInner() {
       );
     }
     return null;
-  }, [editingTextNodeId, inlineEditingCardId, canvasNodes]);
+  }, [editingTextNodeId, inlineEditingCardId, canvasNodes, editingTopicNodeId]);
 
   const prevEditTargetRef = useRef<string | null>(null);
 
@@ -746,6 +867,8 @@ function CanvasInner() {
     setCanUndo(false);
     setCanRedo(false);
     setIsPlacingText(false);
+    setSelectedEdgeLabelId(null);
+    setEditingEdgeLabelId(null);
     setNodes((nds) => (nds.some((n) => n.selected) ? nds.map((n) => ({ ...n, selected: false })) : nds));
     setEdges((eds) => (eds.some((e) => e.selected) ? eds.map((e) => ({ ...e, selected: false })) : eds));
 
@@ -758,7 +881,7 @@ function CanvasInner() {
       return () => clearTimeout(timer);
     }
     prevContextKeyRef.current = contextKey;
-  }, [activeWorkspaceId, selectedHierarchyId, setNodes, setEdges, fitCanvasWithMargins]);
+  }, [activeWorkspaceId, selectedHierarchyId, setSelectedEdgeLabelId, setEditingEdgeLabelId, setNodes, setEdges, fitCanvasWithMargins]);
 
   const activeBreadcrumb = useMemo(
     () => getHierarchyBreadcrumb(hierarchy, selectedHierarchyId),
@@ -815,7 +938,17 @@ function CanvasInner() {
   // Ctrl+V de prints direto no Canvas (fora da edição de texto)
   useEffect(() => {
     const handlePasteOnCanvas = (e: ClipboardEvent) => {
-      if (isOutlineMode || activeCardId !== null || inlineEditingCardId !== null || isLocked) return;
+      if (
+        isOutlineMode ||
+        activeCardId !== null ||
+        inlineEditingCardId !== null ||
+        editingTextNodeId !== null ||
+        editingTopicNodeId !== null ||
+        editingEdgeLabelId !== null ||
+        isLocked
+      ) {
+        return;
+      }
       const target = e.target as HTMLElement | null;
       if (
         target &&
@@ -840,7 +973,7 @@ function CanvasInner() {
 
     window.addEventListener('paste', handlePasteOnCanvas);
     return () => window.removeEventListener('paste', handlePasteOnCanvas);
-  }, [isOutlineMode, activeCardId, inlineEditingCardId, isLocked, insertImageFileToCanvas]);
+  }, [isOutlineMode, activeCardId, inlineEditingCardId, isLocked, editingTextNodeId, editingTopicNodeId, editingEdgeLabelId, insertImageFileToCanvas]);
 
   const selectedCardNodes = useMemo(
     () => nodes.filter((n) => n.selected && n.type === 'knowledgeCard'),
@@ -862,12 +995,22 @@ function CanvasInner() {
     [nodes]
   );
 
+  const selectedTopicNodes = useMemo(
+    () => nodes.filter((n) => n.selected && n.type === 'canvasTopic'),
+    [nodes]
+  );
+
+  const selectedEdges = useMemo(() => edges.filter((e) => e.selected), [edges]);
+
   const selectedGroupableNodes = useMemo(
     () =>
       nodes.filter(
         (n) =>
           n.selected &&
-          (n.type === 'knowledgeCard' || n.type === 'canvasImage' || n.type === 'canvasText')
+          (n.type === 'knowledgeCard' ||
+            n.type === 'canvasImage' ||
+            n.type === 'canvasText' ||
+            n.type === 'canvasTopic')
       ),
     [nodes]
   );
@@ -885,11 +1028,13 @@ function CanvasInner() {
     selectedCardNodes.length === 1
       ? canvasNodes.find((n) => n.id === selectedCardNodes[0].id) ?? null
       : null;
+
   const activeGroupRecord =
     selectedGroupNodes.length === 1 &&
     selectedCardNodes.length === 0 &&
     selectedImageNodes.length === 0 &&
-    selectedTextNodes.length === 0
+    selectedTextNodes.length === 0 &&
+    selectedTopicNodes.length === 0
       ? canvasNodes.find((n) => n.id === selectedGroupNodes[0].id) ?? null
       : null;
 
@@ -897,7 +1042,8 @@ function CanvasInner() {
     selectedImageNodes.length === 1 &&
     selectedCardNodes.length === 0 &&
     selectedGroupNodes.length === 0 &&
-    selectedTextNodes.length === 0
+    selectedTextNodes.length === 0 &&
+    selectedTopicNodes.length === 0
       ? canvasNodes.find((n) => n.id === selectedImageNodes[0].id) ?? null
       : null;
 
@@ -905,8 +1051,28 @@ function CanvasInner() {
     selectedTextNodes.length === 1 &&
     selectedCardNodes.length === 0 &&
     selectedGroupNodes.length === 0 &&
-    selectedImageNodes.length === 0
+    selectedImageNodes.length === 0 &&
+    selectedTopicNodes.length === 0
       ? canvasNodes.find((n) => n.id === selectedTextNodes[0].id) ?? null
+      : null;
+
+  const activeTopicRecord =
+    selectedTopicNodes.length === 1 &&
+    selectedCardNodes.length === 0 &&
+    selectedGroupNodes.length === 0 &&
+    selectedImageNodes.length === 0 &&
+    selectedTextNodes.length === 0
+      ? canvasNodes.find((n) => n.id === selectedTopicNodes[0].id) ?? null
+      : null;
+
+  const activeEdgeRecord =
+    selectedEdges.length === 1 &&
+    selectedCardNodes.length === 0 &&
+    selectedGroupNodes.length === 0 &&
+    selectedImageNodes.length === 0 &&
+    selectedTextNodes.length === 0 &&
+    selectedTopicNodes.length === 0
+      ? canvasEdges.find((e) => e.id === selectedEdges[0].id) ?? null
       : null;
 
   const canShowContextualBar =
@@ -914,13 +1080,29 @@ function CanvasInner() {
     !isOutlineMode &&
     !inlineEditingCardId &&
     !editingTextNodeId &&
+    !editingTopicNodeId &&
     !isDrawingMode &&
     interactionMode !== 'focus';
 
-  const showCardSelectionToolbar = canShowContextualBar && selectedCardNodes.length > 0;
-  const showGroupToolbar = canShowContextualBar && Boolean(activeGroupRecord);
-  const showImageToolbar = canShowContextualBar && Boolean(activeImageRecord);
-  const showTextToolbar = canShowContextualBar && Boolean(activeTextRecord);
+  const activeEdgeLabelRecord = selectedEdgeLabelId
+    ? canvasEdges.find((e) => e.id === selectedEdgeLabelId && Boolean(e.label?.trim())) ?? null
+    : null;
+
+  const showEdgeLabelToolbar =
+    canShowContextualBar && !editingEdgeLabelId && Boolean(activeEdgeLabelRecord);
+
+  const showCardSelectionToolbar =
+    canShowContextualBar && !showEdgeLabelToolbar && selectedCardNodes.length > 0;
+  const showGroupToolbar =
+    canShowContextualBar && !showEdgeLabelToolbar && Boolean(activeGroupRecord);
+  const showImageToolbar =
+    canShowContextualBar && !showEdgeLabelToolbar && Boolean(activeImageRecord);
+  const showTextToolbar =
+    canShowContextualBar && !showEdgeLabelToolbar && Boolean(activeTextRecord);
+  const showTopicToolbar =
+    canShowContextualBar && !showEdgeLabelToolbar && Boolean(activeTopicRecord);
+  const showEdgeToolbar =
+    canShowContextualBar && !showEdgeLabelToolbar && Boolean(activeEdgeRecord);
 
   // Agrupar seleção atual (envolve automaticamente 2+ cards/imagens em um Grupo)
   const handleGroupSelectedItems = async () => {
@@ -958,7 +1140,15 @@ function CanvasInner() {
   // Atalhos de teclado
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
-      if (isOutlineMode || activeCardId !== null || inlineEditingCardId !== null || editingTextNodeId !== null || isLocked) {
+      if (
+        isOutlineMode ||
+        activeCardId !== null ||
+        inlineEditingCardId !== null ||
+        editingTextNodeId !== null ||
+        editingTopicNodeId !== null ||
+        editingEdgeLabelId !== null ||
+        isLocked
+      ) {
         return;
       }
 
@@ -978,15 +1168,48 @@ function CanvasInner() {
         return;
       }
 
+      if (e.key === 'Escape' && selectedEdgeLabelId) {
+        setSelectedEdgeLabelId(null);
+        return;
+      }
+
       if (e.key.toLowerCase() === 't' && !e.ctrlKey && !e.metaKey && !e.altKey && !isDrawingMode) {
         e.preventDefault();
         setIsPlacingText((v) => !v);
         return;
       }
 
+      if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const selTopics = getNodes().filter((n) => n.selected && n.type === 'canvasTopic');
+        if (selTopics.length === 1) {
+          e.preventDefault();
+          handleQuickSubtopic(selTopics[0].id);
+          return;
+        }
+      }
+
       const cmdOrCtrl = e.metaKey || e.ctrlKey;
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Se apenas o rótulo estiver focado, remove somente o rótulo preservando a conexão
+        if (selectedEdgeLabelId) {
+          e.preventDefault();
+          pushHistorySnapshot();
+          const targetId = selectedEdgeLabelId;
+          setSelectedEdgeLabelId(null);
+          await updateCanvasEdge(targetId, {
+            label: undefined,
+            labelPosition: undefined,
+            labelStyle: undefined,
+            labelOffset: undefined,
+          });
+          addToast({
+            message: 'Rótulo removido (conexão mantida)',
+            action: { label: 'Desfazer', onClick: () => handleUndo() },
+          });
+          return;
+        }
+
         const selNodeIds = getNodes().filter((n) => n.selected).map((n) => n.id);
         const selEdgeIds = getEdges().filter((ed) => ed.selected).map((ed) => ed.id);
         if (selNodeIds.length > 0 || selEdgeIds.length > 0) {
@@ -1031,31 +1254,26 @@ function CanvasInner() {
     isOutlineMode,
     activeCardId,
     inlineEditingCardId,
+    editingTextNodeId,
+    editingTopicNodeId,
+    editingEdgeLabelId,
     isLocked,
+    isPlacingText,
+    isDrawingMode,
+    selectedEdgeLabelId,
+    setSelectedEdgeLabelId,
     getNodes,
     getEdges,
     pushHistorySnapshot,
+    updateCanvasEdge,
     deleteCanvasSelection,
     duplicateCanvasNodes,
     handleUndo,
     handleRedo,
     addToast,
+    handleQuickSubtopic,
   ]);
 
-  const getBestHandles = useCallback((sourceNode: Node, targetNode: Node) => {
-    const sW = Number(sourceNode.measured?.width || sourceNode.style?.width || 350);
-    const sH = Number(sourceNode.measured?.height || sourceNode.style?.height || 240);
-    const tW = Number(targetNode.measured?.width || targetNode.style?.width || 350);
-    const tH = Number(targetNode.measured?.height || targetNode.style?.height || 240);
-
-    const dx = targetNode.position.x + tW / 2 - (sourceNode.position.x + sW / 2);
-    const dy = targetNode.position.y + tH / 2 - (sourceNode.position.y + sH / 2);
-
-    if (Math.abs(dx) > Math.abs(dy)) {
-      return dx > 0 ? { s: 's-right', t: 't-left' } : { s: 's-left', t: 't-right' };
-    }
-    return dy > 0 ? { s: 's-bottom', t: 't-top' } : { s: 's-top', t: 't-bottom' };
-  }, []);
 
   const onNodeDragStart = useCallback(
     (_: unknown, node: Node) => {
@@ -1072,7 +1290,7 @@ function CanvasInner() {
         const children = getNodes()
           .filter(
             (n) =>
-              (n.type === 'knowledgeCard' || n.type === 'canvasImage' || n.type === 'canvasText') &&
+              (n.type === 'knowledgeCard' || n.type === 'canvasImage' || n.type === 'canvasText' || n.type === 'canvasTopic') &&
               !n.hidden
           )
           .filter((n) => {
@@ -1116,10 +1334,13 @@ function CanvasInner() {
       const currentNodes = getNodes();
       setEdges((eds) =>
         eds.map((edge) => {
+          if ((edge.data as { routingMode?: string } | undefined)?.routingMode === 'manual') {
+            return edge;
+          }
           const sourceNode = currentNodes.find((n) => n.id === edge.source);
           const targetNode = currentNodes.find((n) => n.id === edge.target);
           if (!sourceNode || !targetNode) return edge;
-          const best = getBestHandles(sourceNode, targetNode);
+          const best = computeBestEdgeHandles(sourceNode, targetNode)
           if (edge.sourceHandle !== best.s || edge.targetHandle !== best.t) {
             return { ...edge, sourceHandle: best.s, targetHandle: best.t };
           }
@@ -1127,7 +1348,7 @@ function CanvasInner() {
         })
       );
     },
-    [getNodes, getBestHandles, setNodes, setEdges]
+    [getNodes, setNodes, setEdges]
   );
 
   const onNodeDragStop = useCallback(
@@ -1150,24 +1371,67 @@ function CanvasInner() {
       }
 
       persistNodePositions(updates);
+
+      // Persiste os melhores lados recalculados das conexões automáticas ligadas aos nós movidos
+      const movedIds = new Set(updates.map((u) => u.id));
+      const latestNodes = getNodes();
+      const storeEdges = useKnowledgeStore.getState().canvasEdges;
+      for (const ce of storeEdges) {
+        if (ce.routingMode === 'manual') continue;
+        if (!movedIds.has(ce.sourceNodeId) && !movedIds.has(ce.targetNodeId)) continue;
+        const src = latestNodes.find((n) => n.id === ce.sourceNodeId);
+        const tgt = latestNodes.find((n) => n.id === ce.targetNodeId);
+        if (!src || !tgt) continue;
+        const best = computeBestEdgeHandles(src, tgt);
+        if (ce.sourceHandle !== best.s || ce.targetHandle !== best.t) {
+          updateCanvasEdge(ce.id, { sourceHandle: best.s, targetHandle: best.t });
+        }
+      }
+      
     },
-    [persistNodePositions]
+    [persistNodePositions, getNodes, updateCanvasEdge]
   );
 
   const onConnect = useCallback(
     (connection: Connection) => {
       if (connection.source && connection.target) {
         pushHistorySnapshot();
+        const srcNode = useKnowledgeStore
+          .getState()
+          .canvasNodes.find((n) => n.id === connection.source);
+        const topicEdgePref = srcNode?.topicConfig?.defaultEdgeStyle;
         addCanvasEdge(connection.source, connection.target, undefined, {
           sourceHandle: connection.sourceHandle ?? undefined,
           targetHandle: connection.targetHandle ?? undefined,
-          edgeType: globalEdgeType,
-          style: globalAnimated ? 'animated' : 'solid',
-          color: globalColor,
+          edgeType: topicEdgePref?.edgeType ?? globalEdgeType,
+          lineStyle: topicEdgePref?.lineStyle ?? 'solid',
+          style: globalAnimated
+            ? 'animated'
+            : topicEdgePref?.lineStyle === 'dashed'
+            ? 'dashed'
+            : 'solid',
+          color: topicEdgePref?.color ?? globalColor,
         });
       }
     },
     [addCanvasEdge, globalEdgeType, globalAnimated, globalColor, pushHistorySnapshot]
+  );
+
+  // Reconexão por arrasto da ponta da seta (escolher novo lado ou novo elemento)
+  const onReconnect = useCallback(
+    (oldEdge: Edge, newConnection: Connection) => {
+      if (!newConnection.source || !newConnection.target) return;
+      pushHistorySnapshot();
+      updateCanvasEdge(oldEdge.id, {
+        sourceNodeId: newConnection.source,
+        targetNodeId: newConnection.target,
+        sourceHandle: newConnection.sourceHandle ?? undefined,
+        targetHandle: newConnection.targetHandle ?? undefined,
+        routingMode: 'auto',
+        waypoints: [],
+      });
+    },
+    [pushHistorySnapshot, updateCanvasEdge]
   );
 
   const onConnectStart = useCallback(
@@ -1281,6 +1545,7 @@ function CanvasInner() {
             ...ce,
             sourceHandle: matched.sourceHandle ?? ce.sourceHandle,
             targetHandle: matched.targetHandle ?? ce.targetHandle,
+            routingMode: 'auto' as const, waypoints: [],
             updatedAt: Date.now(),
           }
         : ce;
@@ -1290,7 +1555,7 @@ function CanvasInner() {
   };
 
   const handleUpdateAllEdges = async (patch: {
-    edgeType?: 'smoothstep' | 'default';
+    edgeType?: 'smoothstep' | 'default' | 'straight';
     animated?: boolean;
     color?: string;
   }) => {
@@ -1371,6 +1636,14 @@ function CanvasInner() {
     pushHistorySnapshot();
     const pos = getSmartViewportPos(640, 360);
     await createCanvasGroup(pos.x, pos.y);
+  };
+
+
+  const handleCreateQuickTopic = async (shape: TopicShape = 'rounded') => {
+    pushHistorySnapshot();
+    const pos = getSmartViewportPos(210, 74);
+    const id = await createCanvasTopic({ x: pos.x, y: pos.y, shape });
+    if (id) setEditingTopicNodeId(id);
   };
 
   const handleCreateQuickText = async (
@@ -1503,8 +1776,9 @@ function CanvasInner() {
             <div>
               <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Formato</span>
               <div className="flex gap-1.5">
-                <button onClick={() => handleUpdateAllEdges({ edgeType: 'smoothstep' })} className={`flex-1 rounded-lg py-1.5 text-xs font-medium ${globalEdgeType === 'smoothstep' ? 'bg-indigo-600 text-white' : 'bg-zinc-800/80 text-zinc-300'}`}>Retas</button>
-                <button onClick={() => handleUpdateAllEdges({ edgeType: 'default' })} className={`flex-1 rounded-lg py-1.5 text-xs font-medium ${globalEdgeType === 'default' ? 'bg-indigo-600 text-white' : 'bg-zinc-800/80 text-zinc-300'}`}>Curvas</button>
+                <button onClick={() => handleUpdateAllEdges({ edgeType: 'smoothstep' })} className={`flex-1 rounded-lg py-1.5 text-[11px] font-medium ${globalEdgeType === 'smoothstep' ? 'bg-indigo-600 text-white' : 'bg-zinc-800/80 text-zinc-300'}`}>Ortogonal</button>
+                <button onClick={() => handleUpdateAllEdges({ edgeType: 'default' })} className={`flex-1 rounded-lg py-1.5 text-[11px] font-medium ${globalEdgeType === 'default' ? 'bg-indigo-600 text-white' : 'bg-zinc-800/80 text-zinc-300'}`}>Curva</button>
+                <button onClick={() => handleUpdateAllEdges({ edgeType: 'straight' })} className={`flex-1 rounded-lg py-1.5 text-[11px] font-medium ${globalEdgeType === 'straight' ? 'bg-indigo-600 text-white' : 'bg-zinc-800/80 text-zinc-300'}`}>Reta</button>
               </div>
             </div>
             <div>
@@ -1636,9 +1910,20 @@ function CanvasInner() {
       ref={containerRef}
       className={`kc-canvas-surface relative h-full w-full transition-colors duration-200 ${
         isDraggingImageFile ? 'ring-2 ring-inset ring-indigo-500' : ''
-      }`}
+      } ${isPlacingText ? 'cursor-text' : ''}`}
       style={{ backgroundColor: canvasBgHex }}
-      onDragOver={(e) => {
+      onContextMenu={(e) => {
+        const target = e.target as HTMLElement | null;
+        const isTextInput =
+          target &&
+          (target.tagName === 'INPUT' ||
+            target.tagName === 'TEXTAREA' ||
+            target.isContentEditable);
+        if (!isTextInput) {
+          e.preventDefault();
+        }
+      }}
+     onDragOver={(e) => {
         if (e.dataTransfer.types.includes('Files')) {
           e.preventDefault();
           setIsDraggingImageFile(true);
@@ -1681,6 +1966,14 @@ function CanvasInner() {
 
       <ReactFlow
         style={{ backgroundColor: canvasBgHex }}
+        onNodeClick={() => {
+          if (selectedEdgeLabelId) setSelectedEdgeLabelId(null);
+          if (editingEdgeLabelId) setEditingEdgeLabelId(null);
+        }}
+        onEdgeClick={() => {
+          if (selectedEdgeLabelId) setSelectedEdgeLabelId(null);
+          if (editingEdgeLabelId) setEditingEdgeLabelId(null);
+        }}
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
@@ -1693,7 +1986,13 @@ function CanvasInner() {
         onConnect={onConnect}
         onConnectStart={onConnectStart}
         onConnectEnd={onConnectEnd}
+        onReconnect={onReconnect}
+        edgesReconnectable={!isLocked}
+        reconnectRadius={22}
         onPaneContextMenu={handlePaneContextMenu}
+        onNodeContextMenu={(e) => e.preventDefault()}
+        onEdgeContextMenu={(e) => e.preventDefault()}
+        onSelectionContextMenu={(e) => e.preventDefault()}
         onInit={(instance) => {
           setLiveViewport(instance.getViewport());
         }}
@@ -1715,12 +2014,21 @@ function CanvasInner() {
           }
         }}
         onPaneClick={async (e) => {
+          if (selectedEdgeLabelId || editingEdgeLabelId) {
+            setSelectedEdgeLabelId(null);
+            setEditingEdgeLabelId(null);
+            return;
+          }
           if (croppingImageNodeId) {
             setCroppingImageNodeId(null);
             return;
           }
           if (editingTextNodeId) {
             setEditingTextNodeId(null);
+            return;
+          }
+          if (editingTopicNodeId) {
+            setEditingTopicNodeId(null);
             return;
           }
           if (inlineEditingCardId) {
@@ -1792,6 +2100,8 @@ function CanvasInner() {
               ? 'rgba(16, 185, 129, 0.55)'
               : n.type === 'canvasText'
               ? 'rgba(245, 158, 11, 0.65)'
+              : n.type === 'canvasTopic'
+              ? 'rgba(168, 85, 247, 0.72)'
               : theme === 'paper'
               ? 'rgba(99, 102, 241, 0.55)'
               : 'rgba(129, 140, 248, 0.45)'
@@ -2672,6 +2982,762 @@ function CanvasInner() {
           </Panel>
         )}
 
+        {/* BARRA CONTEXTUAL 5: TÓPICO / SUBTÓPICO / BALÃO SELECIONADO */}
+        {showTopicToolbar && activeTopicRecord && (
+          <Panel position="top-center" className="mt-3 !max-w-none">
+            <div className="flex w-max max-w-[95vw] flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-indigo-500/40 bg-[#161920]/95 px-2.5 py-1.5 shadow-2xl backdrop-blur-xl">
+              <span className="rounded-lg bg-violet-500/15 px-2 py-1 text-[11px] font-semibold text-violet-300">
+                Tópico
+              </span>
+
+              {/* Criar Subtópico */}
+              <button
+                type="button"
+                onClick={() => handleQuickSubtopic(activeTopicRecord.id)}
+                className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-indigo-500"
+                title="Criar subtópico conectado (Tab)"
+              >
+                <GitBranch className="h-3.5 w-3.5" /> + Subtópico
+              </button>
+
+              {/* Atalho exclusivo para Losango de Decisão: criar ramos Sim / Não */}
+              {activeTopicRecord.topicConfig?.shape === 'diamond' && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    pushHistorySnapshot();
+                    await createSubtopic(activeTopicRecord.id, {
+                      label: 'Caminho Sim',
+                      shape: 'rounded',
+                      edgeLabel: 'Sim',
+                    });
+                    await createSubtopic(activeTopicRecord.id, {
+                      label: 'Caminho Não',
+                      shape: 'rounded',
+                      edgeLabel: 'Não',
+                    });
+                    addToast({ message: 'Ramos Sim / Não criados', variant: 'success' });
+                  }}
+                  className="rounded-lg bg-emerald-500/15 px-2 py-1 text-[11px] font-semibold text-emerald-300 transition hover:bg-emerald-600 hover:text-white"
+                  title="Gerar dois ramos de decisão (Sim / Não)"
+                >
+                  + Sim / Não
+                </button>
+              )}
+
+              <div className="h-4 w-px bg-zinc-800" />
+
+              {/* Formato do Tópico / Balão */}
+              <select
+                value={activeTopicRecord.topicConfig?.shape ?? 'rounded'}
+                onChange={(e) => {
+                  const nextShape = e.target.value as TopicShape;
+                  const patch: Partial<CanvasNodePosition> = {
+                    topicConfig: {
+                      ...(activeTopicRecord.topicConfig ?? { shape: nextShape }),
+                      shape: nextShape,
+                    },
+                  };
+                  if (nextShape === 'square' || nextShape === 'circle') {
+                    const side = Math.max(120, Math.min(240, activeTopicRecord.width || 150));
+                    patch.width = side;
+                    patch.height = side;
+                  } else if (nextShape === 'diamond') {
+                    patch.width = Math.max(160, activeTopicRecord.width || 184);
+                    patch.height = Math.max(120, activeTopicRecord.height || 132);
+                  }
+                  updateCanvasNode(activeTopicRecord.id, patch);
+                }}
+                title="Formato geométrico do tópico"
+                className="rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1 text-[11px] font-medium text-zinc-200 focus:border-indigo-500 focus:outline-none"
+              >
+                <option value="rounded">Arredondado</option>
+                <option value="rect">Retângulo</option>
+                <option value="capsule">Cápsula</option>
+                <option value="square">Quadrado</option>
+                <option value="circle">Círculo</option>
+                <option value="ellipse">Elipse</option>
+                <option value="diamond">Losango (Decisão)</option>
+                <option value="hexagon">Hexágono</option>
+              </select>
+
+              {/* Tipografia */}
+              <TypographyPopover
+                value={activeTopicRecord.typography}
+                legacyFontSize={activeTopicRecord.fontSize}
+                defaults={DEFAULT_TOPIC_TYPOGRAPHY}
+                onChange={(next) =>
+                  updateCanvasNode(activeTopicRecord.id, {
+                    typography: next,
+                    fontSize: next.fontSize,
+                  })
+                }
+                onReset={() =>
+                  updateCanvasNode(activeTopicRecord.id, {
+                    typography: undefined,
+                    fontSize: DEFAULT_TOPIC_TYPOGRAPHY.fontSize,
+                  })
+                }
+              />
+
+              {/* Alinhamento */}
+              <div className="flex items-center gap-0.5 rounded-lg border border-zinc-800 bg-[#0F1115] p-0.5">
+                {(
+                  [
+                    { id: 'left', icon: AlignLeft },
+                    { id: 'center', icon: AlignCenter },
+                    { id: 'right', icon: AlignRight },
+                  ] as const
+                ).map(({ id, icon: Icon }) => (
+                  <button
+                    key={`ta-${id}`}
+                    type="button"
+                    onClick={() => updateCanvasNode(activeTopicRecord.id, { textAlign: id })}
+                    className={`rounded p-1 ${
+                      (activeTopicRecord.textAlign ?? 'center') === id
+                        ? 'bg-indigo-600/30 text-indigo-200'
+                        : 'text-zinc-400 hover:text-zinc-100'
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                  </button>
+                ))}
+              </div>
+
+              <div className="h-4 w-px bg-zinc-800" />
+
+              {/* Cores principais */}
+              <div className="flex items-center gap-1">
+                {GROUP_PALETTE.map((hex) => (
+                  <button
+                    key={`topc-${hex}`}
+                    type="button"
+                    onClick={() =>
+                      updateCanvasNode(activeTopicRecord.id, {
+                        color: hex,
+                        bgColor: hex,
+                        topicConfig: {
+                          ...(activeTopicRecord.topicConfig ?? { shape: 'rounded' }),
+                          defaultEdgeStyle: {
+                            ...(activeTopicRecord.topicConfig?.defaultEdgeStyle ?? {}),
+                            color: hex,
+                          },
+                        },
+                      })
+                    }
+                    className={`h-4 w-4 rounded-full border transition hover:scale-125 ${
+                      (activeTopicRecord.bgColor ?? activeTopicRecord.color) === hex
+                        ? 'scale-110 border-white'
+                        : 'border-zinc-700'
+                    }`}
+                    style={{ backgroundColor: hex }}
+                    title="Cor do tópico"
+                  />
+                ))}
+              </div>
+
+              {/* Opacidade do fundo */}
+              <select
+                value={activeTopicRecord.bgOpacity ?? 'tinted'}
+                onChange={(e) =>
+                  updateCanvasNode(activeTopicRecord.id, {
+                    bgOpacity: e.target.value as CanvasNodePosition['bgOpacity'],
+                  })
+                }
+                className="rounded-lg border border-zinc-800 bg-[#0F1115] px-1.5 py-1 text-[11px] text-zinc-200 focus:outline-none"
+                title="Preenchimento de fundo"
+              >
+                <option value="transparent">Fundo: 0%</option>
+                <option value="subtle">Fundo: Suave</option>
+                <option value="tinted">Fundo: Médio</option>
+                <option value="solid">Fundo: Sólido</option>
+              </select>
+
+              {/* Borda e Sombra */}
+              <select
+                value={activeTopicRecord.borderStyle ?? 'solid'}
+                onChange={(e) =>
+                  updateCanvasNode(activeTopicRecord.id, {
+                    borderStyle: e.target.value as CanvasNodePosition['borderStyle'],
+                  })
+                }
+                className="rounded-lg border border-zinc-800 bg-[#0F1115] px-1.5 py-1 text-[11px] text-zinc-200 focus:outline-none"
+                title="Estilo da borda"
+              >
+                <option value="solid">Borda: Sólida</option>
+                <option value="dashed">Tracejada</option>
+                <option value="dotted">Pontilhada</option>
+                <option value="none">Sem borda</option>
+              </select>
+
+              <select
+                value={activeTopicRecord.topicConfig?.shadow ?? 'md'}
+                onChange={(e) =>
+                  updateCanvasNode(activeTopicRecord.id, {
+                    topicConfig: {
+                      ...(activeTopicRecord.topicConfig ?? { shape: 'rounded' }),
+                      shadow: e.target.value as NonNullable<
+                        CanvasNodePosition['topicConfig']
+                      >['shadow'],
+                    },
+                  })
+                }
+                className="rounded-lg border border-zinc-800 bg-[#0F1115] px-1.5 py-1 text-[11px] text-zinc-200 focus:outline-none"
+                title="Sombra do tópico"
+              >
+                <option value="none">Sem sombra</option>
+                <option value="sm">Sombra leve</option>
+                <option value="md">Sombra média</option>
+                <option value="glow">Brilho</option>
+              </select>
+
+              {/* Estilo padrão das conexões saindo deste tópico */}
+              <select
+                value={activeTopicRecord.topicConfig?.defaultEdgeStyle?.edgeType ?? 'default'}
+                onChange={(e) =>
+                  updateCanvasNode(activeTopicRecord.id, {
+                    topicConfig: {
+                      ...(activeTopicRecord.topicConfig ?? { shape: 'rounded' }),
+                      defaultEdgeStyle: {
+                        ...(activeTopicRecord.topicConfig?.defaultEdgeStyle ?? {}),
+                        edgeType: e.target.value as 'smoothstep' | 'default' | 'straight',
+                      },
+                    },
+                  })
+                }
+                className="rounded-lg border border-zinc-800 bg-[#0F1115] px-1.5 py-1 text-[11px] text-zinc-200 focus:outline-none"
+                title="Estilo padrão das conexões criadas a partir deste tópico"
+              >
+                <option value="default">Setas: Curva</option>
+                <option value="smoothstep">Setas: Ortogonal</option>
+                <option value="straight">Setas: Reta</option>
+              </select>
+
+              {/* Ícones rápidos */}
+              <div className="flex items-center gap-0.5">
+                {['🎯', '💡', '⚖️', '📌', '🔀'].map((ic) => (
+                  <button
+                    key={`ti-${ic}`}
+                    type="button"
+                    onClick={() =>
+                      updateCanvasNode(activeTopicRecord.id, {
+                        topicConfig: {
+                          ...(activeTopicRecord.topicConfig ?? { shape: 'rounded' }),
+                          icon: activeTopicRecord.topicConfig?.icon === ic ? undefined : ic,
+                        },
+                      })
+                    }
+                    className={`rounded px-1 py-0.5 text-xs ${
+                      activeTopicRecord.topicConfig?.icon === ic
+                        ? 'bg-indigo-600/30'
+                        : 'hover:bg-zinc-800'
+                    }`}
+                  >
+                    {ic}
+                  </button>
+                ))}
+              </div>
+
+              <div className="h-4 w-px bg-zinc-800" />
+
+              <button
+                type="button"
+                onClick={async () => {
+                  pushHistorySnapshot();
+                  await duplicateCanvasTopic(activeTopicRecord.id);
+                }}
+                className="rounded-lg p-1.5 text-indigo-400 hover:bg-zinc-800"
+                title="Duplicar tópico"
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  pushHistorySnapshot();
+                  await deleteCanvasSelection([activeTopicRecord.id], []);
+                  addToast({
+                    message: 'Tópico removido do canvas',
+                    action: { label: 'Desfazer', onClick: () => handleUndo() },
+                  });
+                }}
+                className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-500/15"
+                title="Excluir tópico (Delete)"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </Panel>
+        )}
+
+        {/* BARRA CONTEXTUAL 6: CONEXÃO / SETA SELECIONADA */}
+        {showEdgeToolbar && activeEdgeRecord && (
+          <Panel position="top-center" className="mt-3 !max-w-none">
+            <div className="flex w-max max-w-[95vw] flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-indigo-500/40 bg-[#161920]/95 px-3 py-1.5 shadow-2xl backdrop-blur-xl">
+              <span className="rounded-lg bg-sky-500/15 px-2 py-1 text-[11px] font-semibold text-sky-300">
+                Conexão
+              </span>
+
+              {/* Tipo de curva / trajeto */}
+              <div className="flex items-center gap-0.5 rounded-lg border border-zinc-800 bg-[#0F1115] p-0.5">
+                {(
+                  [
+                    { id: 'smoothstep', label: 'Ortogonal' },
+                    { id: 'default', label: 'Curva' },
+                    { id: 'straight', label: 'Reta' },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => updateCanvasEdge(activeEdgeRecord.id, { edgeType: opt.id })}
+                    className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition ${
+                      (activeEdgeRecord.edgeType ?? 'smoothstep') === opt.id
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-zinc-400 hover:text-zinc-100'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Estilo de linha + Animada */}
+              <select
+                value={
+                  activeEdgeRecord.lineStyle ??
+                  (activeEdgeRecord.style === 'dashed' ? 'dashed' : 'solid')
+                }
+                onChange={(e) => {
+                  const nextLine = e.target.value as EdgeLineStyle;
+                  updateCanvasEdge(activeEdgeRecord.id, {
+                    lineStyle: nextLine,
+                    style:
+                      activeEdgeRecord.style === 'animated'
+                        ? 'animated'
+                        : nextLine === 'dashed'
+                        ? 'dashed'
+                        : 'solid',
+                  });
+                }}
+                className="rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1 text-[11px] text-zinc-200 focus:outline-none"
+                title="Tipo de traço"
+              >
+                <option value="solid">Contínua</option>
+                <option value="dashed">Tracejada</option>
+                <option value="dotted">Pontilhada</option>
+              </select>
+
+              <button
+                type="button"
+                onClick={() =>
+                  updateCanvasEdge(activeEdgeRecord.id, {
+                    style: activeEdgeRecord.style === 'animated' ? 'solid' : 'animated',
+                  })
+                }
+                className={`rounded-lg border px-2 py-1 text-[11px] font-medium transition ${
+                  activeEdgeRecord.style === 'animated'
+                    ? 'border-indigo-500 bg-indigo-500/20 text-indigo-200'
+                    : 'border-zinc-800 bg-[#0F1115] text-zinc-400 hover:text-zinc-100'
+                }`}
+                title="Ativar ou desativar fluxo animado"
+              >
+                Animada
+              </button>
+
+              {/* Espessura */}
+              <div className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1">
+                <span className="text-[10px] text-zinc-500">Esp.</span>
+                <input
+                  type="range"
+                  min={1}
+                  max={6}
+                  step={0.5}
+                  value={activeEdgeRecord.strokeWidth ?? 2}
+                  onChange={(e) =>
+                    updateCanvasEdge(activeEdgeRecord.id, {
+                      strokeWidth: parseFloat(e.target.value),
+                    })
+                  }
+                  className="w-14 accent-indigo-500"
+                />
+              </div>
+
+              {/* Pontas de seta (Início / Fim) */}
+              <select
+                value={activeEdgeRecord.arrowStart ?? 'none'}
+                onChange={(e) =>
+                  updateCanvasEdge(activeEdgeRecord.id, {
+                    arrowStart: e.target.value as EdgeArrowType,
+                  })
+                }
+                className="rounded-lg border border-zinc-800 bg-[#0F1115] px-1.5 py-1 text-[11px] text-zinc-200 focus:outline-none"
+                title="Ponta inicial da conexão"
+              >
+                <option value="none">Início: Sem</option>
+                <option value="arrow">Início: Seta</option>
+                <option value="arrowclosed">Início: Cheia</option>
+                <option value="dot">Início: Ponto</option>
+              </select>
+
+              <select
+                value={activeEdgeRecord.arrowEnd ?? 'arrowclosed'}
+                onChange={(e) =>
+                  updateCanvasEdge(activeEdgeRecord.id, {
+                    arrowEnd: e.target.value as EdgeArrowType,
+                  })
+                }
+                className="rounded-lg border border-zinc-800 bg-[#0F1115] px-1.5 py-1 text-[11px] text-zinc-200 focus:outline-none"
+                title="Ponta final da conexão"
+              >
+                <option value="arrowclosed">Fim: Cheia</option>
+                <option value="arrow">Fim: Seta</option>
+                <option value="dot">Fim: Ponto</option>
+                <option value="none">Fim: Sem</option>
+              </select>
+
+              {/* Cor */}
+              <div className="flex items-center gap-1">
+                {EDGE_COLORS.map((hex) => (
+                  <button
+                    key={`ec-${hex}`}
+                    type="button"
+                    onClick={() => updateCanvasEdge(activeEdgeRecord.id, { color: hex })}
+                    className={`h-4 w-4 rounded-full border transition hover:scale-125 ${
+                      (activeEdgeRecord.color ?? '#6366f1') === hex
+                        ? 'scale-110 border-white'
+                        : 'border-zinc-700'
+                    }`}
+                    style={{ backgroundColor: hex }}
+                  />
+                ))}
+              </div>
+
+              {/* Botão para personalizar o rótulo caso a seta já possua texto */}
+              {/* Adicionar ou personalizar o rótulo diretamente pela barra */}
+              {activeEdgeRecord.label?.trim() ? (
+                <button
+                  type="button"
+                  onClick={() => setSelectedEdgeLabelId(activeEdgeRecord.id)}
+                  className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1 text-[11px] font-medium text-zinc-200 hover:border-indigo-500/60 hover:text-indigo-200"
+                  title="Personalizar aparência, rotação e tamanho do rótulo"
+                >
+                  <Tag className="h-3 w-3 text-indigo-400" /> Rótulo
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedEdgeLabelId(activeEdgeRecord.id);
+                    setEditingEdgeLabelId(activeEdgeRecord.id);
+                  }}
+                  className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1 text-[11px] font-medium text-zinc-200 hover:border-indigo-500/60 hover:text-indigo-200"
+                  title="Inserir rótulo nesta conexão"
+                >
+                  <Tag className="h-3 w-3 text-indigo-400" /> + Rótulo
+                </button>
+              )}
+
+              {/* Restaurar para o melhor caminho automático (limpa dobras manuais e recalcula os lados) */}
+              <button
+                type="button"
+                onClick={() => handleResetEdgeToAuto(activeEdgeRecord.id)}
+                className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium transition ${
+                  activeEdgeRecord.routingMode === 'manual' ||
+                  (activeEdgeRecord.waypoints?.length ?? 0) > 0
+                    ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40 hover:bg-amber-500 hover:text-zinc-950'
+                    : 'border border-zinc-800 bg-[#0F1115] text-zinc-300 hover:border-indigo-500/60 hover:text-white'
+                }`}
+                title="Voltar ao melhor caminho automático recalculando entrada, saída e trajeto"
+              >
+                <Wand2 className="h-3 w-3" /> Automático
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  pushHistorySnapshot();
+                  await deleteCanvasEdge(activeEdgeRecord.id);
+                  addToast({
+                    message: 'Conexão removida',
+                    action: { label: 'Desfazer', onClick: () => handleUndo() },
+                  });
+                }}
+                className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-500/15"
+                title="Excluir conexão (Delete)"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </Panel>
+        )}
+
+        {/* BARRA CONTEXTUAL 7: RÓTULO DA CONEXÃO SELECIONADO */}
+        {showEdgeLabelToolbar && activeEdgeLabelRecord && (
+          <Panel position="top-center" className="mt-3 !max-w-none">
+            {(() => {
+              const ls: EdgeLabelStyle = activeEdgeLabelRecord.labelStyle ?? {};
+              const updateLabelStyle = (patch: Partial<EdgeLabelStyle>) => {
+                updateCanvasEdge(activeEdgeLabelRecord.id, {
+                  labelStyle: { ...ls, ...patch },
+                });
+              };
+              const currentFont = ls.fontSize ?? 11;
+              const currentRot = ls.rotation ?? 0;
+
+              return (
+                <div className="flex w-max max-w-[95vw] flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-indigo-500/40 bg-[#161920]/95 px-2.5 py-1.5 shadow-2xl backdrop-blur-xl">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedEdgeLabelId(null)}
+                    className="flex items-center gap-1 rounded-lg bg-zinc-800/80 px-2 py-1 text-[11px] font-medium text-zinc-300 hover:bg-zinc-700 hover:text-white"
+                    title="Voltar para opções da conexão"
+                  >
+                    <ArrowLeft className="h-3 w-3" /> Seta
+                  </button>
+
+                  <span className="rounded-lg bg-indigo-500/15 px-2 py-1 text-[11px] font-semibold text-indigo-300">
+                    Rótulo
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => setEditingEdgeLabelId(activeEdgeLabelRecord.id)}
+                    className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1 text-[11px] font-medium text-zinc-200 hover:border-indigo-500/60 hover:text-white"
+                    title="Editar texto do rótulo (ou duplo clique no rótulo)"
+                  >
+                    <Pencil className="h-3 w-3 text-indigo-400" /> Texto
+                  </button>
+
+                  {/* Presets padronizados com a seta e o tema */}
+                  <select
+                    value={ls.preset ?? 'auto'}
+                    onChange={(e) =>
+                      updateLabelStyle({
+                        preset: e.target.value as EdgeLabelStyle['preset'],
+                        ...(e.target.value !== 'custom'
+                          ? { bgColor: undefined, borderColor: undefined }
+                          : {}),
+                      })
+                    }
+                    className="rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1 text-[11px] text-zinc-200 focus:outline-none"
+                    title="Estilo visual do rótulo"
+                  >
+                    <option value="auto">Padrão da Seta</option>
+                    <option value="neutral">Neutro (Fundo)</option>
+                    <option value="tinted">Destaque Suave</option>
+                    <option value="solid">Sólido (Cor da Seta)</option>
+                    <option value="transparent">Sem Caixa</option>
+                    <option value="custom">Personalizado</option>
+                  </select>
+
+                  {/* Cores sincronizadas com conexões e cards */}
+                  <div className="flex items-center gap-1">
+                    {EDGE_COLORS.map((hex) => (
+                      <button
+                        key={`elc-${hex}`}
+                        type="button"
+                        onClick={() =>
+                          updateLabelStyle({
+                            preset: ls.preset === 'solid' ? 'solid' : 'custom',
+                            bgColor: hex,
+                            borderColor: hex,
+                            textColor: ls.preset === 'solid' ? '#ffffff' : ls.textColor,
+                          })
+                        }
+                        className={`h-4 w-4 rounded-full border transition hover:scale-125 ${
+                          (ls.bgColor ?? activeEdgeLabelRecord.color) === hex
+                            ? 'scale-110 border-white'
+                            : 'border-zinc-700'
+                        }`}
+                        style={{ backgroundColor: hex }}
+                        title="Cor do rótulo"
+                      />
+                    ))}
+                  </div>
+
+                  {/* Cor do texto */}
+                  <div className="flex items-center gap-0.5">
+                    {['', '#ffffff', '#18181b', '#fde68a', '#bae6fd'].map((hex) => (
+                      <button
+                        key={`elt-${hex || 'auto'}`}
+                        type="button"
+                        onClick={() => updateLabelStyle({ textColor: hex || undefined })}
+                        className={`flex h-4 w-4 items-center justify-center rounded-full border text-[8px] font-bold text-zinc-400 transition hover:scale-110 ${
+                          (ls.textColor ?? '') === hex ? 'scale-110 border-white' : 'border-zinc-700'
+                        }`}
+                        style={hex ? { backgroundColor: hex } : undefined}
+                        title={hex ? `Cor do texto ${hex}` : 'Cor automática'}
+                      >
+                        {!hex && 'A'}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="h-4 w-px bg-zinc-800" />
+
+                  {/* Fonte, Negrito e Alinhamento */}
+                  <div className="flex items-center gap-0.5 rounded-lg border border-zinc-800 bg-[#0F1115] px-1 py-0.5">
+                    <button
+                      type="button"
+                      onClick={() => updateLabelStyle({ fontSize: Math.max(9, currentFont - 1) })}
+                      className="rounded p-0.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                      title="Diminuir fonte"
+                    >
+                      <Minus className="h-3 w-3" />
+                    </button>
+                    <span className="w-7 text-center font-mono text-[10.5px] text-zinc-200">
+                      {currentFont}px
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => updateLabelStyle({ fontSize: Math.min(26, currentFont + 1) })}
+                      className="rounded p-0.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                      title="Aumentar fonte"
+                    >
+                      <Plus className="h-3 w-3" />
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateLabelStyle({
+                        fontWeight: ls.fontWeight === 'bold' ? 'medium' : 'bold',
+                      })
+                    }
+                    className={`rounded-lg border p-1.5 transition ${
+                      ls.fontWeight === 'bold'
+                        ? 'border-indigo-500 bg-indigo-600/25 text-indigo-200'
+                        : 'border-zinc-800 bg-[#0F1115] text-zinc-400 hover:text-white'
+                    }`}
+                    title="Negrito"
+                  >
+                    <Bold className="h-3 w-3" />
+                  </button>
+
+                  <div className="flex items-center gap-0.5 rounded-lg border border-zinc-800 bg-[#0F1115] p-0.5">
+                    {(
+                      [
+                        { id: 'left', icon: AlignLeft },
+                        { id: 'center', icon: AlignCenter },
+                        { id: 'right', icon: AlignRight },
+                      ] as const
+                    ).map(({ id, icon: Icon }) => (
+                      <button
+                        key={`ela-${id}`}
+                        type="button"
+                        onClick={() => updateLabelStyle({ textAlign: id })}
+                        className={`rounded p-1 ${
+                          (ls.textAlign ?? 'center') === id
+                            ? 'bg-indigo-600/30 text-indigo-200'
+                            : 'text-zinc-400 hover:text-zinc-100'
+                        }`}
+                      >
+                        <Icon className="h-3 w-3" />
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="h-4 w-px bg-zinc-800" />
+
+                  {/* Rotação: Seguir seta automaticamente ou ângulo manual */}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateLabelStyle({
+                        autoRotate: !ls.autoRotate,
+                      })
+                    }
+                    className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition ${
+                      ls.autoRotate
+                        ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-300'
+                        : 'border-zinc-800 bg-[#0F1115] text-zinc-300 hover:border-indigo-500/60'
+                    }`}
+                    title="Alinhar automaticamente o ângulo do rótulo ao trecho da conexão"
+                  >
+                    <RotateCw className="h-3 w-3" /> Seguir seta
+                  </button>
+
+                  <div className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-[#0F1115] px-1.5 py-0.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateLabelStyle({
+                          autoRotate: false,
+                          rotation: ((currentRot - 45 + 540) % 360) - 180,
+                        })
+                      }
+                      className="rounded px-1 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                      title="Girar -45°"
+                    >
+                      -45°
+                    </button>
+                    <span className="w-8 text-center font-mono text-[10.5px] text-zinc-200">
+                      {ls.autoRotate ? 'Auto' : `${currentRot}°`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateLabelStyle({
+                          autoRotate: false,
+                          rotation: ((currentRot + 45 + 540) % 360) - 180,
+                        })
+                      }
+                      className="rounded px-1 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-white"
+                      title="Girar +45°"
+                    >
+                      +45°
+                    </button>
+                  </div>
+
+                  {/* Restaurar tamanho/posição/estilo do rótulo */}
+                  {(ls.width || ls.height || ls.rotation || ls.autoRotate) && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateCanvasEdge(activeEdgeLabelRecord.id, {
+                          labelPosition: 0.5,
+                          labelStyle: {
+                            ...ls,
+                            width: undefined,
+                            height: undefined,
+                            rotation: 0,
+                            autoRotate: false,
+                          },
+                        })
+                      }
+                      className="rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1 text-[11px] text-zinc-300 hover:border-indigo-500/60 hover:text-white"
+                      title="Restaurar tamanho automático, 0° e centro da seta"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                    </button>
+                  )}
+
+                  {/* Excluir apenas o rótulo */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedEdgeLabelId(null);
+                      updateCanvasEdge(activeEdgeLabelRecord.id, {
+                        label: undefined,
+                        labelPosition: undefined,
+                        labelStyle: undefined,
+                        labelOffset: undefined,
+                      });
+                    }}
+                    className="rounded-lg p-1.5 text-rose-400 hover:bg-rose-500/15"
+                    title="Remover apenas o rótulo (mantém a seta)"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              );
+            })()}
+          </Panel>
+        )}
+
         {/* DOCK INFERIOR DE CRIAÇÃO RÁPIDA */}
         {!zenMode && (
           <Panel position="bottom-center" className="mb-4">
@@ -2696,6 +3762,13 @@ function CanvasInner() {
               </button>
               <div className="mx-0.5 h-4 w-px bg-zinc-800" />
               <button
+                onClick={() => handleCreateQuickTopic('rounded')}
+                className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs text-zinc-300 transition hover:bg-zinc-800"
+                title="Adicionar Tópico / Nó de Mapa Mental ou Fluxograma"
+              >
+                <Shapes className="h-3.5 w-3.5 text-violet-400" /> Tópico
+              </button>
+              <button
                 onClick={() => handleCreateQuickText('plain')}
                 className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs transition ${
                   isPlacingText
@@ -2717,7 +3790,7 @@ function CanvasInner() {
                 onClick={handleCreateQuickGroup}
                 className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs text-zinc-300 transition hover:bg-zinc-800"
               >
-                <FolderPlus className="h-3.5 w-3.5 text-violet-400" /> Novo Grupo
+                <FolderPlus className="h-3.5 w-3.5 text-indigo-400" /> Novo Grupo
               </button>
             </div>
           </Panel>

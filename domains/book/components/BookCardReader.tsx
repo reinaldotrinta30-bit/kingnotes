@@ -20,12 +20,16 @@ import Image from '@tiptap/extension-image';
 import { common, createLowlight } from 'lowlight';
 import { Bookmark, Edit3, Flame, Highlighter, Palette, Pin, Star, Brain } from 'lucide-react';
 import { KnowledgeCardContent, KnowledgeCardMeta } from '@/domains/knowledge/types';
+import { DEFAULT_CARD_TYPOGRAPHY, resolveCardCallout } from '@/domains/knowledge/utils/defaults';
 import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryFactory';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
 import { useUiStore } from '@/domains/ui/store/useUiStore';
 import { MathBlock } from '@/domains/knowledge/extensions/MathBlock';
 import { MermaidBlock } from '@/domains/knowledge/extensions/MermaidBlock';
 import { WikiLinkNode } from '@/domains/knowledge/extensions/WikiLinkNode';
+import { StudyTapeMark } from '@/domains/knowledge/extensions/StudyTapeMark';
+import { buildTypographyCssVars } from '@/domains/canvas/components/CardRichPreview';
+import { CalloutBadge } from '@/domains/canvas/components/CalloutBadge';
 
 const lowlight = createLowlight(common);
 
@@ -57,6 +61,9 @@ const PEN_COLORS = [
 interface BookCardReaderProps {
   card: KnowledgeCardMeta;
   penModeEnabled: boolean;
+  showCallouts?: boolean;
+  hideTitle?: boolean;
+  isPrintSheet?: boolean;
   onOpenEditor: (cardId: string) => void;
   onOpenNotebooks: (cardId: string) => void;
 }
@@ -64,11 +71,16 @@ interface BookCardReaderProps {
 export function BookCardReader({
   card,
   penModeEnabled,
+  showCallouts = true,
+  hideTitle = false,
+  isPrintSheet = false,
   onOpenEditor,
   onOpenNotebooks,
 }: BookCardReaderProps) {
   const saveCardContent = useKnowledgeStore((s) => s.saveCardContent);
-  const { preferences } = useUiStore();
+  const { theme, preferences } = useUiStore();
+
+  const effectiveTheme: 'dark' | 'paper' = isPrintSheet ? 'paper' : theme;
 
   const bookTypographyClass = [
     preferences.bookFont === 'sans'
@@ -79,7 +91,11 @@ export function BookCardReader({
       : preferences.bookFontSize === 'lg'
       ? '[&_.ProseMirror]:!text-[18.5px]'
       : '[&_.ProseMirror]:!text-[16px]',
+    effectiveTheme === 'paper'
+      ? '[&_.ProseMirror]:!text-zinc-800'
+      : '[&_.ProseMirror]:!text-zinc-200',
   ].join(' ');
+
   const [content, setContent] = useState<KnowledgeCardContent | null>(null);
   const [isSelected, setIsSelected] = useState(false);
   const contentRef = useRef<KnowledgeCardContent | null>(null);
@@ -107,6 +123,7 @@ export function BookCardReader({
       Color,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Highlight.configure({ multicolor: true }),
+      StudyTapeMark,
       TaskList,
       TaskItem.configure({ nested: true }),
       Table.configure({ resizable: false }),
@@ -121,9 +138,8 @@ export function BookCardReader({
     ],
     editorProps: {
       attributes: {
-        class: 'book-prose font-serif text-[16px] leading-[1.82] text-zinc-200 focus:outline-none',
+        class: 'book-prose font-serif text-[16px] leading-[1.82] focus:outline-none',
       },
-      // Bloqueia digitação ou exclusão acidental no Modo Livro (só permite selecionar/copiar/grifar)
       handleKeyDown: (_view, event) => {
         const allowed = [
           'ArrowLeft',
@@ -167,60 +183,83 @@ export function BookCardReader({
     saveCardContent(card.id, updated, plainText);
   };
 
+  const callout = resolveCardCallout(card);
+  const hasVisibleCallout =
+    showCallouts && Boolean((callout.text ?? '').trim()) && callout.visible !== false;
+  const typoStyle = buildTypographyCssVars(card.typography, DEFAULT_CARD_TYPOGRAPHY);
+
   return (
     <article
       id={`card-${card.id}`}
-      className={`group relative rounded-2xl border bg-[#161920] p-6 transition ${
-        penModeEnabled && isSelected
-          ? 'border-indigo-500/50 ring-1 ring-indigo-500/30'
-          : 'border-zinc-800/75 hover:border-zinc-700/80'
+      className={`kc-book-avoid-break group relative rounded-2xl border p-6 transition ${
+        effectiveTheme === 'paper'
+          ? penModeEnabled && isSelected
+            ? 'border-indigo-400 bg-white ring-1 ring-indigo-400/40'
+            : 'border-stone-200/90 bg-white/95 hover:border-stone-300'
+          : penModeEnabled && isSelected
+          ? 'border-indigo-500/50 bg-[#161920] ring-1 ring-indigo-500/30'
+          : 'border-zinc-800/75 bg-[#161920] hover:border-zinc-700/80'
       }`}
     >
-      {/* Cabeçalho do Artigo */}
-      <div className="mb-4 flex items-start justify-between gap-4 border-b border-zinc-800/70 pb-3">
-        <div className="flex items-center gap-2">
-          {card.emoji && <span className="text-lg">{card.emoji}</span>}
-          <h3 className="text-lg font-semibold tracking-tight text-zinc-100">{card.title}</h3>
-        </div>
+      {/* Cabeçalho do Artigo (oculto apenas quando o card já está promovido a título de Capítulo/Seção acima) */}
+      {!hideTitle && (
+        <div
+          className={`mb-4 flex items-start justify-between gap-4 border-b pb-3 ${
+            effectiveTheme === 'paper' ? 'border-stone-200' : 'border-zinc-800/70'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {card.emoji && <span className="text-lg">{card.emoji}</span>}
+            <h3
+              className={`text-lg font-semibold tracking-tight ${
+                effectiveTheme === 'paper' ? 'text-zinc-900' : 'text-zinc-100'
+              }`}
+            >
+              {card.title}
+            </h3>
+          </div>
 
-        <div className="flex shrink-0 items-center gap-1.5">
-          {card.importance === 'critical' && (
-            <span title="Crítico em prova"><Flame className="h-4 w-4 text-rose-400" /></span>
-          )}
-          {card.isPinned && <Pin className="h-3.5 w-3.5 text-indigo-400" />}
-          {card.isFavorite && <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />}
-          {(content?.flashcards.length ?? 0) > 0 && (
-            <span className="flex items-center gap-1 rounded-md bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-medium text-indigo-300">
-              <Brain className="h-3 w-3" /> {content?.flashcards.length}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => onOpenNotebooks(card.id)}
-            className={`rounded-lg p-1.5 transition ${
-              (card.notebookIds?.length ?? 0) > 0
-                ? 'bg-emerald-500/15 text-emerald-400'
-                : 'text-zinc-500 opacity-0 hover:bg-zinc-800 hover:text-zinc-200 group-hover:opacity-100'
-            }`}
-            title="Vincular a Meus Cadernos"
-          >
-            <Bookmark className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => onOpenEditor(card.id)}
-            className="flex items-center gap-1 rounded-lg bg-zinc-800/80 px-2.5 py-1 text-xs text-zinc-300 opacity-0 transition group-hover:opacity-100 hover:bg-indigo-600 hover:text-white"
-          >
-            <Edit3 className="h-3 w-3" /> Editar
-          </button>
+          <div className="kc-no-print flex shrink-0 items-center gap-1.5">
+            {card.importance === 'critical' && (
+              <span title="Crítico em prova">
+                <Flame className="h-4 w-4 text-rose-500" />
+              </span>
+            )}
+            {card.isPinned && <Pin className="h-3.5 w-3.5 text-indigo-400" />}
+            {card.isFavorite && <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />}
+            {(content?.flashcards.length ?? 0) > 0 && (
+              <span className="flex items-center gap-1 rounded-md bg-indigo-500/15 px-1.5 py-0.5 text-[10px] font-medium text-indigo-400">
+                <Brain className="h-3 w-3" /> {content?.flashcards.length}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => onOpenNotebooks(card.id)}
+              className={`rounded-lg p-1.5 transition ${
+                (card.notebookIds?.length ?? 0) > 0
+                  ? 'bg-emerald-500/15 text-emerald-500'
+                  : 'text-zinc-500 opacity-0 hover:bg-zinc-800 hover:text-zinc-200 group-hover:opacity-100'
+              }`}
+              title="Vincular a Meus Cadernos"
+            >
+              <Bookmark className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenEditor(card.id)}
+              className="flex items-center gap-1 rounded-lg bg-zinc-800/80 px-2.5 py-1 text-xs text-zinc-200 opacity-0 transition group-hover:opacity-100 hover:bg-indigo-600 hover:text-white"
+            >
+              <Edit3 className="h-3 w-3" /> Editar
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Barra Flutuante de Canetas (quando Modo Canetas está ligado) */}
+      {/* Barra Flutuante de Canetas (Modo Canetas) */}
       {penModeEnabled && editor && (
         <div
           onMouseDown={(e) => e.preventDefault()}
-          className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-500/25 bg-[#0F1115]/90 px-3 py-1.5 text-[11px]"
+          className="kc-no-print mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-500/25 bg-[#0F1115]/90 px-3 py-1.5 text-[11px]"
         >
           <span className="font-semibold uppercase tracking-wider text-indigo-300">
             Canetas (selecione o texto):
@@ -282,20 +321,29 @@ export function BookCardReader({
         </div>
       )}
 
+      {/* Observação no Topo ou Etiqueta */}
+      {hasVisibleCallout && (callout.position === 'top' || callout.position === 'badge') && (
+        <CalloutBadge config={callout} theme={effectiveTheme} className="mb-4" />
+      )}
+
       {/* Conteúdo Rico Completo */}
       {content ? (
-        <div className={bookTypographyClass}>
+        <div style={typoStyle} className={bookTypographyClass}>
           <EditorContent editor={editor} />
         </div>
       ) : (
-        <p className="font-serif text-[16px] leading-7 text-zinc-400">{card.excerpt}</p>
+        <p
+          className={`font-serif text-[16px] leading-7 ${
+            effectiveTheme === 'paper' ? 'text-zinc-600' : 'text-zinc-400'
+          }`}
+        >
+          {card.excerpt}
+        </p>
       )}
 
-      {/* Nota / Pegadinha de Banca */}
-      {card.notes && (
-        <blockquote className="mt-5 rounded-r-xl border-l-2 border-amber-500/70 bg-amber-500/[0.06] px-4 py-2.5 text-xs leading-relaxed text-amber-200/90">
-          <strong className="text-amber-400">Atenção em prova:</strong> {card.notes}
-        </blockquote>
+      {/* Observação / Pegadinha Personalizada preservada */}
+      {hasVisibleCallout && callout.position !== 'top' && callout.position !== 'badge' && (
+        <CalloutBadge config={callout} theme={effectiveTheme} className="mt-4" />
       )}
 
       {/* Tags */}
@@ -304,7 +352,11 @@ export function BookCardReader({
           {card.tags.map((t) => (
             <span
               key={t}
-              className="rounded-md bg-zinc-900 px-2 py-0.5 text-[10px] font-medium text-zinc-400"
+              className={`rounded-md px-2 py-0.5 text-[10px] font-medium ${
+                effectiveTheme === 'paper'
+                  ? 'bg-stone-100 text-stone-600'
+                  : 'bg-zinc-900 text-zinc-400'
+              }`}
             >
               #{t}
             </span>

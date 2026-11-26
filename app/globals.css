@@ -731,3 +731,50 @@ html.dark {
 html.paper {
   color-scheme: light;
 }
+
+/* ============================================================================
+   MODO LIVRO — IMPRESSÃO E EXPORTAÇÃO LIMPA PARA PDF
+   ============================================================================ */
+@media print {
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    color: #18181b !important;
+  }
+
+  aside,
+  header:not(.kc-book-print-root header),
+  .kc-no-print {
+    display: none !important;
+  }
+
+  .kc-book-print-root,
+  .kc-book-scroll {
+    position: static !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    padding: 0 !important;
+  }
+
+  .kc-book-sheet {
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: #ffffff !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+  }
+
+  .kc-book-page-break {
+    page-break-before: always;
+    break-before: page;
+  }
+
+  .kc-book-avoid-break {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}

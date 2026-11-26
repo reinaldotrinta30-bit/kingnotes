@@ -7,6 +7,7 @@ export type CanvasBackgroundStyle = 'dots' | 'grid' | 'none';
 export type BookWidth = 'narrow' | 'medium' | 'wide';
 export type BookFont = 'serif' | 'sans';
 export type BookFontSize = 'sm' | 'base' | 'lg';
+export type EditorPresentationMode = 'expanded' | 'side';
 
 export interface UserPreferences {
   cardDensity: CardDensity;
@@ -75,6 +76,9 @@ interface UiState {
   setCroppingImageNodeId: (nodeId: string | null) => void;
   editingTextNodeId: string | null;
   setEditingTextNodeId: (nodeId: string | null) => void;
+  editorPresentation: EditorPresentationMode;
+  setEditorPresentation: (mode: EditorPresentationMode) => void;
+  toggleEditorPresentation: () => void;
   hasUnsavedEditorChanges: boolean;
   setHasUnsavedEditorChanges: (dirty: boolean) => void;
   clearTransientCanvasUi: () => void;
@@ -135,6 +139,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   isCanvasZoomedOut: false,
   croppingImageNodeId: null,
   editingTextNodeId: null,
+  editorPresentation: 'expanded',
   hasUnsavedEditorChanges: false,
 
   hydrateUi: () => {
@@ -220,6 +225,11 @@ export const useUiStore = create<UiState>((set, get) => ({
     set((s) => (s.isCanvasZoomedOut === isCanvasZoomedOut ? s : { isCanvasZoomedOut })),
   setCroppingImageNodeId: (croppingImageNodeId) => set({ croppingImageNodeId }),
   setEditingTextNodeId: (editingTextNodeId) => set({ editingTextNodeId }),
+  setEditorPresentation: (editorPresentation) => set({ editorPresentation }),
+  toggleEditorPresentation: () =>
+    set((s) => ({
+      editorPresentation: s.editorPresentation === 'expanded' ? 'side' : 'expanded',
+    })),
   setHasUnsavedEditorChanges: (hasUnsavedEditorChanges) => set({ hasUnsavedEditorChanges }),
   clearTransientCanvasUi: () =>
     set({

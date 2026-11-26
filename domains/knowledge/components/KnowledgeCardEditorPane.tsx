@@ -39,41 +39,39 @@ import {
   GitFork,
   Link2,
   Paperclip,
-  Pin,
-  Star,
-  Flame,
   X,
-  Plus,
   Brain,
-  Trash2,
   Maximize2,
-  Minimize2,
-  Tag,
-  ArrowUpRight,
-  FolderTree,
-  Bookmark,
+  PanelRight,
   Columns2,
   Scissors,
   Heading1,
   Heading2,
   Sparkles,
   Braces,
+  Save,
+  CheckCircle2,
+  SlidersHorizontal,
+  EyeOff,
 } from 'lucide-react';
 import { useKnowledgeStore } from '../store/useKnowledgeStore';
 import { useUiStore } from '@/domains/ui/store/useUiStore';
 import {
   EmbeddedFlashcard,
   FullKnowledgeCard,
-  ImportanceLevel,
-  KnowledgeCardMeta,
   LocalAttachment,
 } from '../types';
+import { DEFAULT_CARD_TYPOGRAPHY, resolveCardCallout } from '../utils/defaults';
+import { getHierarchyBreadcrumb } from '../utils/hierarchyContext';
 import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryFactory';
 import { MathBlock } from '../extensions/MathBlock';
 import { MermaidBlock } from '../extensions/MermaidBlock';
 import { WikiLinkNode, extractOutgoingLinkIds } from '../extensions/WikiLinkNode';
-import { AttachmentManager } from './AttachmentManager';
+import { StudyTapeMark } from '../extensions/StudyTapeMark';
+import { buildTypographyCssVars, setCardPreviewCache } from '@/domains/canvas/components/CardRichPreview';
+import { CalloutBadge } from '@/domains/canvas/components/CalloutBadge';
 import { NotebookPickerModal } from './NotebookPickerModal';
+import { EditorInspectorPanel } from './EditorInspectorPanel';
 
 const lowlight = createLowlight(common);
 
@@ -88,15 +86,6 @@ const CustomHorizontalRule = HorizontalRule.extend({
     };
   },
 });
-
-const CARD_COLORS: Array<{ id: KnowledgeCardMeta['color']; label: string; dot: string }> = [
-  { id: 'default', label: 'Neutro', dot: '#52525b' },
-  { id: 'violet', label: 'Violeta', dot: '#8b5cf6' },
-  { id: 'sky', label: 'Azul', dot: '#0ea5e9' },
-  { id: 'emerald', label: 'Verde', dot: '#10b981' },
-  { id: 'amber', label: 'Âmbar', dot: '#f59e0b' },
-  { id: 'rose', label: 'Rosa', dot: '#f43f5e' },
-];
 
 const TEXT_COLORS = ['#e4e4e7', '#818cf8', '#38bdf8', '#34d399', '#fbbf24', '#fb7185', '#f97316'];
 const HIGHLIGHT_COLORS = ['#fde047', '#86efac', '#7dd3fc', '#f9a8d4', '#fdba74'];
@@ -242,28 +231,27 @@ export function KnowledgeCardEditorPane({
   fullCard,
   slot,
   isSplitActive,
-  isExpanded = false,
+  isExpanded = true,
   onToggleExpand,
   onClose,
 }: KnowledgeCardEditorPaneProps) {
   const {
     cardsById,
     hierarchy,
-    openCard,
     openSecondaryCard,
     updateCardMeta,
     saveCardContent,
-    deleteCard,
-    restoreCardBundle,
     extractSelectionToCard,
   } = useKnowledgeStore();
-  const { openConfirm, addToast } = useUiStore();
+  const { theme, addToast, setHasUnsavedEditorChanges } = useUiStore();
 
   const [isNotebookModalOpen, setIsNotebookModalOpen] = useState(false);
-  const [newTag, setNewTag] = useState('');
-  const [newFront, setNewFront] = useState('');
-  const [newBack, setNewBack] = useState('');
-  const [flippedIds, setFlippedIds] = useState<Record<string, boolean>>({});
+  const [showInspector, setShowInspector] = useState(() => !isSplitActive && isExpanded);
+
+  // Estado explícito de rascunho + indicador de alterações não salvas
+  const [titleDraft, setTitleDraft] = useState(fullCard.meta.title);
+  const [isDirty, setIsDirty] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<number>(fullCard.meta.updatedAt);
 
   // Popovers da barra fixa
   const [openMenu, setOpenMenu] = useState<
@@ -271,26 +259,47 @@ export function KnowledgeCardEditorPane({
   >(null);
   const [wikiQuery, setWikiQuery] = useState('');
 
-  // Menus inteligentes no cursor: Slash (/) e WikiLink ([[)
+  // Menus no cursor: / e [[
   const [triggerMenu, setTriggerMenu] = useState<FloatingTriggerMenu | null>(null);
   const [triggerIndex, setTriggerIndex] = useState(0);
 
-  // Bubble Menu contextual ao selecionar texto
+  // Bubble Menu contextual
   const [bubbleMenu, setBubbleMenu] = useState<BubbleMenuState | null>(null);
   const [quickFlashcardMode, setQuickFlashcardMode] = useState(false);
   const [quickFlashcardFront, setQuickFlashcardFront] = useState('');
 
   const cardRef = useRef(fullCard);
   cardRef.current = fullCard;
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const titleDraftRef = useRef(titleDraft);
+  titleDraftRef.current = titleDraft;
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Refs para o teclado do TipTap acessar os menus flutuantes sem closure obsoleta
   const triggerMenuRef = useRef<FloatingTriggerMenu | null>(null);
   triggerMenuRef.current = triggerMenu;
   const triggerIndexRef = useRef(0);
   triggerIndexRef.current = triggerIndex;
 
-  // Itens filtrados do Slash Command
+  // Ajusta visibilidade do inspetor ao alternar entre Tela Ampliada, Lateral e Split View
+  useEffect(() => {
+    if (isSplitActive) {
+      setShowInspector(false);
+    } else if (isExpanded) {
+      setShowInspector(true);
+    }
+  }, [isSplitActive, isExpanded]);
+
+  // Sincroniza título externo caso alterado em outro ponto
+  useEffect(() => {
+    if (!isDirty) setTitleDraft(fullCard.meta.title);
+  }, [fullCard.meta.title, isDirty]);
+
+  // Sincroniza dirty state com a UiStore para proteção ao trocar disciplina/workspace
+  useEffect(() => {
+    if (slot === 'primary') {
+      setHasUnsavedEditorChanges(isDirty);
+    }
+  }, [isDirty, slot, setHasUnsavedEditorChanges]);
+
   const filteredSlashItems = useMemo(() => {
     if (triggerMenu?.kind !== 'slash') return [];
     const q = triggerMenu.query.toLowerCase();
@@ -303,7 +312,6 @@ export function KnowledgeCardEditorPane({
     );
   }, [triggerMenu]);
 
-  // Itens filtrados do Autocomplete [[
   const filteredWikiItems = useMemo(() => {
     if (triggerMenu?.kind !== 'wikilink') return [];
     const q = triggerMenu.query.toLowerCase();
@@ -319,6 +327,55 @@ export function KnowledgeCardEditorPane({
   filteredWikiRef.current = filteredWikiItems;
 
   const editorRef = useRef<ReturnType<typeof useEditor>>(null);
+
+  const commitSaveNow = useCallback(
+    async (showToastFeedback = false) => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+      const ed = editorRef.current;
+      const latest = cardRef.current;
+      if (!ed || !latest) return;
+
+      const json = ed.getJSON() as Record<string, unknown>;
+      const plainText = ed.getText();
+      const outgoingLinkIds = extractOutgoingLinkIds(json);
+      const cleanTitle = titleDraftRef.current.trim() || 'Sem título';
+
+      setCardPreviewCache(latest.meta.id, json);
+
+      const metaPatch: Partial<FullKnowledgeCard['meta']> = {};
+      if (cleanTitle !== latest.meta.title) metaPatch.title = cleanTitle;
+      if (latest.meta.outgoingLinkIds.join(',') !== outgoingLinkIds.join(',')) {
+        metaPatch.outgoingLinkIds = outgoingLinkIds;
+      }
+
+      await saveCardContent(
+        latest.meta.id,
+        { ...latest.content, tiptapJson: json, plainText, updatedAt: Date.now() },
+        plainText
+      );
+      if (Object.keys(metaPatch).length > 0) {
+        await updateCardMeta(latest.meta.id, metaPatch);
+      }
+
+      setIsDirty(false);
+      setLastSavedAt(Date.now());
+      if (showToastFeedback) {
+        addToast({ message: 'Alterações salvas', variant: 'success' }, 1800);
+      }
+    },
+    [saveCardContent, updateCardMeta, addToast]
+  );
+
+  const scheduleAutoSave = useCallback(() => {
+    setIsDirty(true);
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      commitSaveNow(false);
+    }, 1800);
+  }, [commitSaveNow]);
 
   const executeTriggerItem = useCallback((idx: number) => {
     const ed = editorRef.current;
@@ -360,6 +417,7 @@ export function KnowledgeCardEditorPane({
       Color,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Highlight.configure({ multicolor: true }),
+      StudyTapeMark,
       TaskList,
       TaskItem.configure({ nested: true }),
       Table.configure({ resizable: true }),
@@ -378,9 +436,8 @@ export function KnowledgeCardEditorPane({
     ],
     editorProps: {
       attributes: {
-        class: 'min-h-[300px] focus:outline-none',
+        class: 'kc-inline-prose min-h-[340px] focus:outline-none',
       },
-      // Navegação por teclado nos menus / e [[
       handleKeyDown: (_view, event) => {
         const menu = triggerMenuRef.current;
         if (!menu) return false;
@@ -413,7 +470,6 @@ export function KnowledgeCardEditorPane({
         }
         return false;
       },
-      // Smart Paste: Ctrl+V de print/imagem comprime em WebP e insere direto no cursor
       handlePaste: (_view, event) => {
         const items = event.clipboardData?.items;
         if (!items) return false;
@@ -433,10 +489,6 @@ export function KnowledgeCardEditorPane({
       },
     },
     onUpdate: ({ editor: ed }) => {
-      const current = cardRef.current;
-      if (!current) return;
-
-      // Detecta gatilhos [[ e / no cursor
       const { $from, empty } = ed.state.selection;
       if (empty) {
         const textBefore = $from.parent.textBetween(0, $from.parentOffset, '\n', '\0');
@@ -462,26 +514,7 @@ export function KnowledgeCardEditorPane({
         setTriggerMenu(null);
       }
 
-      // Salvamento com debounce suave
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(() => {
-        const latest = cardRef.current;
-        if (!latest || latest.meta.id !== current.meta.id) return;
-
-        const json = ed.getJSON() as Record<string, unknown>;
-        const plainText = ed.getText();
-        const outgoingLinkIds = extractOutgoingLinkIds(json);
-
-        saveCardContent(
-          latest.meta.id,
-          { ...latest.content, tiptapJson: json, plainText, updatedAt: Date.now() },
-          plainText
-        );
-
-        if (latest.meta.outgoingLinkIds.join(',') !== outgoingLinkIds.join(',')) {
-          updateCardMeta(latest.meta.id, { outgoingLinkIds });
-        }
-      }, 260);
+      scheduleAutoSave();
     },
     onSelectionUpdate: ({ editor: ed }) => {
       const { from, to, empty } = ed.state.selection;
@@ -514,9 +547,24 @@ export function KnowledgeCardEditorPane({
 
   editorRef.current = editor;
 
+  // Atalho Ctrl+S para salvar explicitamente
+  useEffect(() => {
+    const onSaveKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        commitSaveNow(true);
+      }
+    };
+    window.addEventListener('keydown', onSaveKey);
+    return () => window.removeEventListener('keydown', onSaveKey);
+  }, [commitSaveNow]);
+
   useEffect(() => {
     if (editor && fullCard) {
       editor.commands.setContent(fullCard.content.tiptapJson, { emitUpdate: false });
+      setTitleDraft(fullCard.meta.title);
+      setIsDirty(false);
+      setLastSavedAt(fullCard.meta.updatedAt);
       setOpenMenu(null);
       setTriggerMenu(null);
       setBubbleMenu(null);
@@ -526,24 +574,9 @@ export function KnowledgeCardEditorPane({
 
   useEffect(() => {
     return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
   }, []);
-
-  // Hierarquia em cascata
-  const disciplines = useMemo(() => hierarchy.filter((h) => h.level === 'discipline'), [hierarchy]);
-  const subjects = useMemo(
-    () => hierarchy.filter((h) => h.level === 'subject' && h.parentId === fullCard.meta.disciplineId),
-    [hierarchy, fullCard.meta.disciplineId]
-  );
-  const subsubjects = useMemo(
-    () => hierarchy.filter((h) => h.level === 'subsubject' && h.parentId === fullCard.meta.subjectId),
-    [hierarchy, fullCard.meta.subjectId]
-  );
-  const topics = useMemo(
-    () => hierarchy.filter((h) => h.level === 'topic' && h.parentId === fullCard.meta.subsubjectId),
-    [hierarchy, fullCard.meta.subsubjectId]
-  );
 
   const otherCards = useMemo(() => {
     const q = wikiQuery.trim().toLowerCase();
@@ -553,11 +586,18 @@ export function KnowledgeCardEditorPane({
       .slice(0, 12);
   }, [cardsById, fullCard.meta.id, wikiQuery]);
 
-  const backlinks = useMemo(
-    () =>
-      Object.values(cardsById).filter((c) => c.outgoingLinkIds?.includes(fullCard.meta.id)),
-    [cardsById, fullCard.meta.id]
-  );
+  const breadcrumb = useMemo(() => {
+    const targetId =
+      fullCard.meta.topicId ||
+      fullCard.meta.subsubjectId ||
+      fullCard.meta.subjectId ||
+      fullCard.meta.disciplineId ||
+      null;
+    return getHierarchyBreadcrumb(hierarchy, targetId);
+  }, [hierarchy, fullCard.meta]);
+
+  const typoStyle = buildTypographyCssVars(fullCard.meta.typography, DEFAULT_CARD_TYPOGRAPHY);
+  const callout = resolveCardCallout(fullCard.meta);
 
   // Ações rápidas do Bubble Menu
   const handleCreateQuickFlashcard = () => {
@@ -592,12 +632,15 @@ export function KnowledgeCardEditorPane({
     const replacement = isAlreadyCloze ? selectedText.slice(2, -2) : `{{${selectedText}}}`;
     editor.chain().focus().insertContentAt({ from, to }, replacement).run();
     setBubbleMenu(null);
-    addToast({
-      message: isAlreadyCloze
-        ? 'Lacuna removida'
-        : 'Lacuna {{...}} criada — entrará na sessão de revisão!',
-      variant: 'success',
-    }, 2800);
+    addToast(
+      {
+        message: isAlreadyCloze
+          ? 'Lacuna removida'
+          : 'Lacuna {{...}} criada — entrará na sessão de revisão!',
+        variant: 'success',
+      },
+      2800
+    );
   };
 
   const handleExtractToNewCard = async () => {
@@ -628,61 +671,6 @@ export function KnowledgeCardEditorPane({
         onClick: () => openSecondaryCard(extracted.cardId),
       },
     });
-  };
-
-  const handleAddTag = () => {
-    const clean = newTag
-      .trim()
-      .toLowerCase()
-      .replace(/^#+/, '')
-      .replace(/\s+/g, '-');
-    if (!clean || fullCard.meta.tags.includes(clean)) {
-      setNewTag('');
-      return;
-    }
-    updateCardMeta(fullCard.meta.id, { tags: [...fullCard.meta.tags, clean] });
-    setNewTag('');
-  };
-
-  const handleRemoveTag = (tag: string) => {
-    updateCardMeta(fullCard.meta.id, {
-      tags: fullCard.meta.tags.filter((t) => t !== tag),
-    });
-  };
-
-  const handleAddFlashcard = () => {
-    if (!newFront.trim() || !newBack.trim()) return;
-    const fc: EmbeddedFlashcard = {
-      id: `fc-${crypto.randomUUID()}`,
-      front: newFront.trim(),
-      back: newBack.trim(),
-      easeFactor: 2.5,
-      intervalDays: 1,
-      nextReviewAt: Date.now(),
-    };
-    saveCardContent(
-      fullCard.meta.id,
-      {
-        ...fullCard.content,
-        flashcards: [...fullCard.content.flashcards, fc],
-        updatedAt: Date.now(),
-      },
-      fullCard.content.plainText
-    );
-    setNewFront('');
-    setNewBack('');
-  };
-
-  const handleDeleteFlashcard = (fcId: string) => {
-    saveCardContent(
-      fullCard.meta.id,
-      {
-        ...fullCard.content,
-        flashcards: fullCard.content.flashcards.filter((f) => f.id !== fcId),
-        updatedAt: Date.now(),
-      },
-      fullCard.content.plainText
-    );
   };
 
   const handleAttachFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -744,121 +732,90 @@ export function KnowledgeCardEditorPane({
     );
   };
 
-  const cycleImportance = () => {
-    const order: ImportanceLevel[] = ['normal', 'high', 'critical'];
-    const idx = order.indexOf(fullCard.meta.importance);
-    updateCardMeta(fullCard.meta.id, { importance: order[(idx + 1) % order.length] });
-  };
-
   return (
     <div className="relative flex h-full min-w-0 flex-1 flex-col bg-[#13161C]/98">
-      {/* TOPBAR DO PAINEL */}
-      <div className="flex items-center justify-between border-b border-zinc-800/80 px-4 py-3">
-        <div className="flex items-center gap-1">
+      {/* CABEÇALHO DO EDITOR AVANÇADO */}
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800/80 px-5 py-3">
+        <div className="flex min-w-0 items-center gap-2.5">
           {slot === 'secondary' && (
-            <span className="mr-1.5 rounded bg-indigo-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-300">
+            <span className="shrink-0 rounded-md bg-indigo-500/15 px-2 py-0.5 text-[10px] font-semibold text-indigo-300">
               LADO A LADO
             </span>
           )}
-
-          <button
-            onClick={() => updateCardMeta(fullCard.meta.id, { isPinned: !fullCard.meta.isPinned })}
-            className={`rounded-lg p-1.5 transition ${
-              fullCard.meta.isPinned ? 'bg-indigo-500/20 text-indigo-400' : 'text-zinc-400 hover:bg-zinc-800'
-            }`}
-            title="Fixar permanentemente"
-          >
-            <Pin className="h-4 w-4" />
-          </button>
-
-          <button
-            onClick={() => updateCardMeta(fullCard.meta.id, { isFavorite: !fullCard.meta.isFavorite })}
-            className={`rounded-lg p-1.5 transition ${
-              fullCard.meta.isFavorite ? 'bg-amber-500/20 text-amber-400' : 'text-zinc-400 hover:bg-zinc-800'
-            }`}
-            title="Favoritar"
-          >
-            <Star className="h-4 w-4" />
-          </button>
-
-          <button
-            onClick={() => setIsNotebookModalOpen(true)}
-            className={`rounded-lg p-1.5 transition ${
-              (fullCard.meta.notebookIds?.length ?? 0) > 0
-                ? 'bg-emerald-500/20 text-emerald-400'
-                : 'text-zinc-400 hover:bg-zinc-800'
-            }`}
-            title="Vincular a Meus Cadernos"
-          >
-            <Bookmark className="h-4 w-4" />
-          </button>
-
-          <button
-            onClick={cycleImportance}
-            className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium transition ${
-              fullCard.meta.importance === 'critical'
-                ? 'bg-rose-500/20 text-rose-300'
-                : fullCard.meta.importance === 'high'
-                ? 'bg-amber-500/20 text-amber-300'
-                : 'text-zinc-400 hover:bg-zinc-800'
-            }`}
-            title="Alternar importância"
-          >
-            <Flame className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">
-              {fullCard.meta.importance === 'critical'
-                ? 'Crítico'
-                : fullCard.meta.importance === 'high'
-                ? 'Importante'
-                : 'Normal'}
-            </span>
-          </button>
-
-          <div className="mx-1 h-4 w-px bg-zinc-800" />
-
-          <div className="hidden items-center gap-1 sm:flex">
-            {CARD_COLORS.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => updateCardMeta(fullCard.meta.id, { color: c.id })}
-                title={`Cor do card: ${c.label}`}
-                className={`h-3.5 w-3.5 rounded-full border-2 transition hover:scale-110 ${
-                  fullCard.meta.color === c.id ? 'scale-110 border-white' : 'border-transparent opacity-65'
-                }`}
-                style={{ backgroundColor: c.dot }}
-              />
-            ))}
+          {fullCard.meta.emoji && (
+            <span className="shrink-0 text-base leading-none">{fullCard.meta.emoji}</span>
+          )}
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="truncate text-xs font-semibold text-zinc-100">
+                {titleDraft || 'Sem título'}
+              </span>
+              {isDirty ? (
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-300">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                  Não salvo
+                </span>
+              ) : (
+                <span
+                  className="hidden shrink-0 items-center gap-1 text-[10.5px] text-emerald-400/90 sm:inline-flex"
+                  title={`Último salvamento: ${new Date(lastSavedAt).toLocaleTimeString('pt-BR')}`}
+                >
+                  <CheckCircle2 className="h-3 w-3" /> Salvo
+                </span>
+              )}
+            </div>
+            {breadcrumb.length > 0 && (
+              <p className="truncate text-[10.5px] text-zinc-500">
+                {breadcrumb.map((b) => b.title).join(' › ')}
+              </p>
+            )}
           </div>
         </div>
 
-        <div className="flex items-center gap-1">
-          {/* Botão Split View (abrir segundo card lado a lado) */}
+        <div className="flex shrink-0 items-center gap-1.5">
+          {/* Botão Salvar explícito (Ctrl+S) */}
+          <button
+            type="button"
+            onClick={() => commitSaveNow(true)}
+            className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
+              isDirty
+                ? 'bg-indigo-600 text-white shadow-sm hover:bg-indigo-500'
+                : 'border border-zinc-800 bg-[#0F1115] text-zinc-300 hover:border-zinc-700 hover:text-white'
+            }`}
+            title="Salvar agora (Ctrl+S)"
+          >
+            <Save className="h-3.5 w-3.5" />
+            <span>Salvar</span>
+          </button>
+
+          {/* Split View: abrir 2º card lado a lado */}
           {slot === 'primary' && (
             <div className="relative">
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   setWikiQuery('');
                   setOpenMenu(openMenu === 'splitpicker' ? null : 'splitpicker');
                 }}
-                className={`flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium transition ${
+                className={`flex items-center gap-1 rounded-xl border px-2.5 py-1.5 text-xs font-medium transition ${
                   isSplitActive
-                    ? 'bg-indigo-600/25 text-indigo-300'
-                    : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'
+                    ? 'border-indigo-500/50 bg-indigo-600/20 text-indigo-200'
+                    : 'border-zinc-800 bg-[#0F1115] text-zinc-300 hover:border-zinc-700 hover:text-white'
                 }`}
                 title="Abrir outro card lado a lado (Split View)"
               >
-                <Columns2 className="h-4 w-4" />
-                <span className="hidden sm:inline">Dividir</span>
+                <Columns2 className="h-3.5 w-3.5" />
+                <span className="hidden md:inline">Lado a Lado</span>
               </button>
 
               {openMenu === 'splitpicker' && (
                 <div
                   onClick={(e) => e.stopPropagation()}
-                  className="absolute right-0 top-full z-40 mt-2 w-64 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl"
+                  className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl"
                 >
                   <p className="mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-                    Abrir ao lado (Split View)
+                    Abrir segundo card ao lado
                   </p>
                   <input
                     autoFocus
@@ -894,464 +851,272 @@ export function KnowledgeCardEditorPane({
             </div>
           )}
 
-          {slot === 'primary' && !isSplitActive && onToggleExpand && (
-            <button
-              onClick={onToggleExpand}
-              className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-              title={isExpanded ? 'Reduzir painel' : 'Expandir para modo foco'}
-            >
-              {isExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-            </button>
-          )}
-
-          <button
-            onClick={() => {
-              const snapshotFull = fullCard;
-              const state = useKnowledgeStore.getState();
-              const linkedNodes = state.canvasNodes.filter((n) => n.cardId === snapshotFull.meta.id);
-              const nodeIds = new Set(linkedNodes.map((n) => n.id));
-              const linkedEdges = state.canvasEdges.filter(
-                (e) => nodeIds.has(e.sourceNodeId) || nodeIds.has(e.targetNodeId)
-              );
-
-              openConfirm({
-                title: 'Excluir Knowledge Card?',
-                description: `"${snapshotFull.meta.title}" será removido do canvas e da biblioteca. Você poderá desfazer logo em seguida.`,
-                confirmLabel: 'Excluir',
-                variant: 'danger',
-                onConfirm: async () => {
-                  await deleteCard(snapshotFull.meta.id);
-                  addToast({
-                    message: 'Knowledge Card excluído',
-                    action: {
-                      label: 'Desfazer',
-                      onClick: () => restoreCardBundle(snapshotFull, linkedNodes, linkedEdges),
-                    },
-                  });
-                },
-              });
-            }}
-            className="rounded-lg p-1.5 text-zinc-400 hover:bg-rose-500/15 hover:text-rose-400"
-            title="Excluir Card"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-
-          <button
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-            title="Fechar"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* CORPO SCROLLÁVEL */}
-      <div
-        className="flex-1 overflow-y-auto px-6 py-5"
-        onClick={() => {
-          if (openMenu) setOpenMenu(null);
-          if (triggerMenu) setTriggerMenu(null);
-        }}
-      >
-        {/* Classificação Hierárquica 4 Níveis */}
-        <div className="mb-4 flex flex-wrap items-center gap-1.5 text-[11px]">
-          <FolderTree className="mr-0.5 h-3.5 w-3.5 text-indigo-400" />
-          <select
-            value={fullCard.meta.disciplineId || ''}
-            onChange={(e) =>
-              updateCardMeta(fullCard.meta.id, {
-                disciplineId: e.target.value,
-                subjectId: '',
-                subsubjectId: null,
-                topicId: null,
-              })
-            }
-            className="rounded-lg border border-zinc-800 bg-zinc-900/80 px-2 py-1 text-zinc-200 focus:border-indigo-500 focus:outline-none"
-          >
-            <option value="">Disciplina...</option>
-            {disciplines.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.title}
-              </option>
-            ))}
-          </select>
-
-          {subjects.length > 0 && (
-            <>
-              <span className="text-zinc-600">/</span>
-              <select
-                value={fullCard.meta.subjectId || ''}
-                onChange={(e) =>
-                  updateCardMeta(fullCard.meta.id, {
-                    subjectId: e.target.value,
-                    subsubjectId: null,
-                    topicId: null,
-                  })
-                }
-                className="rounded-lg border border-zinc-800 bg-zinc-900/80 px-2 py-1 text-zinc-200 focus:border-indigo-500 focus:outline-none"
-              >
-                <option value="">Assunto...</option>
-                {subjects.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.title}
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
-
-          {subsubjects.length > 0 && (
-            <>
-              <span className="text-zinc-600">/</span>
-              <select
-                value={fullCard.meta.subsubjectId || ''}
-                onChange={(e) =>
-                  updateCardMeta(fullCard.meta.id, {
-                    subsubjectId: e.target.value || null,
-                    topicId: null,
-                  })
-                }
-                className="rounded-lg border border-zinc-800 bg-zinc-900/80 px-2 py-1 text-zinc-200 focus:border-indigo-500 focus:outline-none"
-              >
-                <option value="">Subassunto...</option>
-                {subsubjects.map((ss) => (
-                  <option key={ss.id} value={ss.id}>
-                    {ss.title}
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
-
-          {topics.length > 0 && (
-            <>
-              <span className="text-zinc-600">/</span>
-              <select
-                value={fullCard.meta.topicId || ''}
-                onChange={(e) =>
-                  updateCardMeta(fullCard.meta.id, { topicId: e.target.value || null })
-                }
-                className="rounded-lg border border-zinc-800 bg-zinc-900/80 px-2 py-1 text-zinc-200 focus:border-indigo-500 focus:outline-none"
-              >
-                <option value="">Tópico...</option>
-                {topics.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.title}
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
-        </div>
-
-        {/* Título */}
-        <input
-          value={fullCard.meta.title}
-          onChange={(e) => updateCardMeta(fullCard.meta.id, { title: e.target.value })}
-          className="mb-3 w-full bg-transparent text-2xl font-bold tracking-tight text-zinc-100 focus:outline-none"
-          placeholder="Título do Knowledge Card"
-        />
-
-        {/* Tags */}
-        <div className="mb-3 flex flex-wrap items-center gap-1.5">
-          <Tag className="h-3.5 w-3.5 text-zinc-500" />
-          {fullCard.meta.tags.map((tag) => (
-            <span
-              key={tag}
-              className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-[11px] font-medium text-zinc-300"
-            >
-              #{tag}
-              <button onClick={() => handleRemoveTag(tag)} className="text-zinc-500 hover:text-rose-400">
-                ×
-              </button>
-            </span>
-          ))}
-          <input
-            value={newTag}
-            onChange={(e) => setNewTag(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                handleAddTag();
-              }
-            }}
-            placeholder="+ tag (Enter)"
-            className="w-28 rounded-md bg-transparent px-1.5 py-0.5 text-[11px] text-zinc-300 placeholder:text-zinc-600 focus:bg-zinc-900 focus:outline-none"
-          />
-        </div>
-
-        {/* Observação rápida / Pegadinha */}
-        <input
-          value={fullCard.meta.notes}
-          onChange={(e) => updateCardMeta(fullCard.meta.id, { notes: e.target.value })}
-          className="mb-4 w-full rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-3.5 py-2 text-xs text-amber-200 placeholder:text-zinc-500 focus:border-amber-500/50 focus:outline-none"
-          placeholder="Observação rápida / pegadinha de banca / mnemônico..."
-        />
-
-        {/* TOOLBAR RICA FIXA */}
-        {editor && (
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="sticky top-0 z-20 mb-4 flex flex-wrap items-center gap-1 rounded-xl border border-zinc-800/90 bg-[#181C24]/95 p-1.5 shadow-lg backdrop-blur-md"
-          >
-            {[1, 2, 3].map((lvl) => (
-              <button
-                key={lvl}
-                type="button"
-                onClick={() => editor.chain().focus().toggleHeading({ level: lvl as 1 | 2 | 3 }).run()}
-                className={`rounded-lg px-2 py-1 text-[11px] font-bold transition ${
-                  editor.isActive('heading', { level: lvl })
-                    ? 'bg-indigo-600 text-white'
-                    : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'
-                }`}
-              >
-                H{lvl}
-              </button>
-            ))}
-
-            <div className="mx-0.5 h-4 w-px bg-zinc-800" />
-
-            <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={`rounded-lg p-1.5 ${editor.isActive('bold') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Negrito"><Bold className="h-3.5 w-3.5" /></button>
-            <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={`rounded-lg p-1.5 ${editor.isActive('italic') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Itálico"><Italic className="h-3.5 w-3.5" /></button>
-            <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={`rounded-lg p-1.5 ${editor.isActive('underline') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Sublinhado"><UnderlineIcon className="h-3.5 w-3.5" /></button>
-
-            <div className="relative">
-              <button type="button" onClick={() => setOpenMenu(openMenu === 'color' ? null : 'color')} className="rounded-lg p-1.5 text-zinc-300 hover:bg-zinc-800" title="Cor do texto">
-                <Palette className="h-3.5 w-3.5" />
-              </button>
-              {openMenu === 'color' && (
-                <div className="absolute left-0 top-full z-30 mt-2 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
-                  {TEXT_COLORS.map((hex) => (
-                    <button key={hex} type="button" onClick={() => { editor.chain().focus().setColor(hex).run(); setOpenMenu(null); }} className="h-4 w-4 rounded-full border border-zinc-700 hover:scale-125" style={{ backgroundColor: hex }} />
-                  ))}
-                  <button type="button" onClick={() => { editor.chain().focus().unsetColor().run(); setOpenMenu(null); }} className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">Reset</button>
-                </div>
-              )}
-            </div>
-
-            <div className="relative">
-              <button type="button" onClick={() => setOpenMenu(openMenu === 'highlight' ? null : 'highlight')} className={`rounded-lg p-1.5 ${editor.isActive('highlight') ? 'bg-amber-500/20 text-amber-300' : 'text-amber-300 hover:bg-zinc-800'}`} title="Marca-texto">
-                <Highlighter className="h-3.5 w-3.5" />
-              </button>
-              {openMenu === 'highlight' && (
-                <div className="absolute left-0 top-full z-30 mt-2 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
-                  {HIGHLIGHT_COLORS.map((hex) => (
-                    <button key={hex} type="button" onClick={() => { editor.chain().focus().toggleHighlight({ color: hex }).run(); setOpenMenu(null); }} className="h-4 w-4 rounded border border-zinc-700 hover:scale-125" style={{ backgroundColor: hex }} />
-                  ))}
-                  <button type="button" onClick={() => { editor.chain().focus().unsetHighlight().run(); setOpenMenu(null); }} className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">Limpar</button>
-                </div>
-              )}
-            </div>
-
-            <div className="mx-0.5 h-4 w-px bg-zinc-800" />
-
-            <button type="button" onClick={() => editor.chain().focus().setTextAlign('left').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"><AlignLeft className="h-3.5 w-3.5" /></button>
-            <button type="button" onClick={() => editor.chain().focus().setTextAlign('center').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"><AlignCenter className="h-3.5 w-3.5" /></button>
-            <button type="button" onClick={() => editor.chain().focus().setTextAlign('right').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"><AlignRight className="h-3.5 w-3.5" /></button>
-
-            <div className="mx-0.5 h-4 w-px bg-zinc-800" />
-
-            <button type="button" onClick={() => editor.chain().focus().toggleBulletList().run()} className={`rounded-lg p-1.5 ${editor.isActive('bulletList') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`}><List className="h-3.5 w-3.5" /></button>
-            <button type="button" onClick={() => editor.chain().focus().toggleOrderedList().run()} className={`rounded-lg p-1.5 ${editor.isActive('orderedList') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`}><ListOrdered className="h-3.5 w-3.5" /></button>
-            <button type="button" onClick={() => editor.chain().focus().toggleTaskList().run()} className={`rounded-lg p-1.5 ${editor.isActive('taskList') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`}><CheckSquare className="h-3.5 w-3.5" /></button>
-            <button type="button" onClick={() => editor.chain().focus().toggleBlockquote().run()} className={`rounded-lg p-1.5 ${editor.isActive('blockquote') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`}><Quote className="h-3.5 w-3.5" /></button>
-            <button type="button" onClick={() => editor.chain().focus().toggleCodeBlock().run()} className={`rounded-lg p-1.5 ${editor.isActive('codeBlock') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`}><Code2 className="h-3.5 w-3.5" /></button>
-
-            <div className="relative">
-              <button type="button" onClick={() => setOpenMenu(openMenu === 'table' ? null : 'table')} className={`rounded-lg p-1.5 ${editor.isActive('table') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Tabela">
-                <TableIcon className="h-3.5 w-3.5" />
-              </button>
-              {openMenu === 'table' && (
-                <div className="absolute left-0 top-full z-30 mt-2 flex w-48 flex-col gap-0.5 rounded-xl border border-zinc-800 bg-[#161920] p-1.5 text-xs shadow-2xl">
-                  <button type="button" onClick={() => { editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left font-medium text-indigo-300 hover:bg-zinc-800">Inserir Tabela (3×3)</button>
-                  <button type="button" onClick={() => { editor.chain().focus().addColumnAfter().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-300 hover:bg-zinc-800">+ Coluna à direita</button>
-                  <button type="button" onClick={() => { editor.chain().focus().addRowAfter().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-300 hover:bg-zinc-800">+ Linha abaixo</button>
-                  <button type="button" onClick={() => { editor.chain().focus().deleteColumn().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-400 hover:bg-zinc-800">- Remover coluna</button>
-                  <button type="button" onClick={() => { editor.chain().focus().deleteRow().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-400 hover:bg-zinc-800">- Remover linha</button>
-                  <div className="my-1 h-px bg-zinc-800" />
-                  <button type="button" onClick={() => { editor.chain().focus().deleteTable().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-rose-400 hover:bg-rose-500/15">Excluir tabela</button>
-                </div>
-              )}
-            </div>
-
-            <div className="relative">
-              <button type="button" onClick={() => setOpenMenu(openMenu === 'hr' ? null : 'hr')} className="rounded-lg p-1.5 text-zinc-300 hover:bg-zinc-800" title="Divisória">
-                <Minus className="h-3.5 w-3.5" />
-              </button>
-              {openMenu === 'hr' && (
-                <div className="absolute left-0 top-full z-30 mt-2 flex w-40 flex-col gap-1 rounded-xl border border-zinc-800 bg-[#161920] p-1.5 text-xs shadow-2xl">
-                  <button type="button" onClick={() => { editor.chain().focus().insertContent({ type: 'horizontalRule', attrs: { class: 'kc-hr-solid' } }).run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-200 hover:bg-zinc-800">Linha Contínua</button>
-                  <button type="button" onClick={() => { editor.chain().focus().insertContent({ type: 'horizontalRule', attrs: { class: 'kc-hr-dashed' } }).run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-200 hover:bg-zinc-800">Linha Tracejada</button>
-                </div>
-              )}
-            </div>
-
-            <div className="mx-0.5 h-4 w-px bg-zinc-800" />
-
-            <button type="button" onClick={() => editor.chain().focus().insertContent({ type: 'mathBlock', attrs: { latex: '' } }).run()} className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-indigo-300 hover:bg-indigo-500/15" title="Fórmula KaTeX">
-              <Sigma className="h-3.5 w-3.5" /> Fórmula
-            </button>
-            <button type="button" onClick={() => editor.chain().focus().insertContent({ type: 'mermaidBlock' }).run()} className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/15" title="Diagrama Mermaid">
-              <GitFork className="h-3.5 w-3.5" /> Diagrama
-            </button>
-
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => {
-                  setWikiQuery('');
-                  setOpenMenu(openMenu === 'wikilink' ? null : 'wikilink');
-                }}
-                className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-sky-300 hover:bg-sky-500/15"
-              >
-                <Link2 className="h-3.5 w-3.5" /> [[Link]]
-              </button>
-              {openMenu === 'wikilink' && (
-                <div className="absolute right-0 top-full z-30 mt-2 w-64 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
-                  <input
-                    autoFocus
-                    value={wikiQuery}
-                    onChange={(e) => setWikiQuery(e.target.value)}
-                    placeholder="Buscar card para conectar..."
-                    className="mb-2 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100 focus:border-indigo-500 focus:outline-none"
-                  />
-                  <div className="max-h-48 space-y-0.5 overflow-y-auto">
-                    {otherCards.map((target) => (
-                      <button
-                        key={target.id}
-                        type="button"
-                        onClick={() => {
-                          editor.chain().focus().insertContent({ type: 'wikiLink', attrs: { cardId: target.id, label: target.title } }).run();
-                          setOpenMenu(null);
-                        }}
-                        className="block w-full truncate rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-200 hover:bg-indigo-600/20 hover:text-indigo-200"
-                      >
-                        {target.title}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <label className="flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-zinc-300 hover:bg-zinc-800">
-              <Paperclip className="h-3.5 w-3.5" /> Mídia
-              <input type="file" accept="image/*,application/pdf,audio/*" className="hidden" onChange={handleAttachFile} />
-            </label>
-          </div>
-        )}
-
-        {/* ÁREA DE ESCRITA */}
-        <EditorContent editor={editor} />
-
-        {/* ANEXOS LOCAIS (PDF / ÁUDIO / VOZ) */}
-        <AttachmentManager
-          attachments={fullCard.content.attachments}
-          onAddAttachment={handleAddAttachmentFromManager}
-          onRemoveAttachment={handleRemoveAttachment}
-        />
-
-        {/* FLASHCARDS EMBUTIDOS */}
-        <div className="mt-7 border-t border-zinc-800/80 pt-5">
-          <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-indigo-300">
-            <Brain className="h-4 w-4" /> Flashcards Embutidos ({fullCard.content.flashcards.length})
-          </div>
-
-          <div className="mb-3 space-y-2">
-            {fullCard.content.flashcards.map((fc) => {
-              const flipped = !!flippedIds[fc.id];
-              return (
-                <div
-                  key={fc.id}
-                  onClick={() => setFlippedIds((p) => ({ ...p, [fc.id]: !p[fc.id] }))}
-                  className="group relative cursor-pointer rounded-xl border border-zinc-800 bg-zinc-900/70 p-3.5 transition hover:border-indigo-500/40"
-                >
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteFlashcard(fc.id);
-                    }}
-                    className="absolute right-2.5 top-2.5 rounded p-1 text-zinc-600 opacity-0 transition hover:text-rose-400 group-hover:opacity-100"
-                    title="Remover flashcard"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                    {flipped ? 'Resposta (clique para ocultar)' : 'Pergunta (clique para revelar)'}
-                  </p>
-                  <p className="mt-1 pr-6 text-sm text-zinc-100">{flipped ? fc.back : fc.front}</p>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="space-y-2 rounded-xl border border-zinc-800/80 bg-zinc-900/40 p-3">
-            <input
-              value={newFront}
-              onChange={(e) => setNewFront(e.target.value)}
-              placeholder="Frente (Pergunta de revisão ativa)..."
-              className="w-full rounded-lg bg-zinc-950/70 px-3 py-1.5 text-xs text-zinc-100 focus:outline-none"
-            />
-            <input
-              value={newBack}
-              onChange={(e) => setNewBack(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleAddFlashcard();
-              }}
-              placeholder="Verso (Resposta objetiva)..."
-              className="w-full rounded-lg bg-zinc-950/70 px-3 py-1.5 text-xs text-zinc-100 focus:outline-none"
-            />
+          {/* Alternar entre Tela Ampliada e Painel Lateral (vendo o Canvas ao lado) */}
+          {slot === 'primary' && onToggleExpand && (
             <button
               type="button"
-              onClick={handleAddFlashcard}
-              className="flex items-center gap-1 rounded-lg bg-indigo-600/90 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500"
+              onClick={onToggleExpand}
+              className="flex items-center gap-1 rounded-xl border border-zinc-800 bg-[#0F1115] px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition hover:border-zinc-700 hover:text-white"
+              title={
+                isExpanded
+                  ? 'Alternar para painel lateral (ver o Canvas ao lado)'
+                  : 'Alternar para tela ampliada'
+              }
             >
-              <Plus className="h-3.5 w-3.5" /> Adicionar Flashcard
+              {isExpanded ? <PanelRight className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+              <span className="hidden xl:inline">{isExpanded ? 'Lateral' : 'Ampliar'}</span>
             </button>
+          )}
+
+          {/* Alternar Inspetor lateral de Propriedades */}
+          <button
+            type="button"
+            onClick={() => setShowInspector((v) => !v)}
+            className={`rounded-xl border p-1.5 transition ${
+              showInspector
+                ? 'border-indigo-500/50 bg-indigo-500/15 text-indigo-300'
+                : 'border-zinc-800 bg-[#0F1115] text-zinc-400 hover:text-zinc-100'
+            }`}
+            title={showInspector ? 'Ocultar painel de propriedades' : 'Mostrar painel de propriedades'}
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+          </button>
+
+          {/* Fechar */}
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex items-center gap-1 rounded-xl border border-zinc-800 bg-[#0F1115] px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-200"
+            title="Fechar editor (Esc)"
+          >
+            <X className="h-4 w-4" />
+            <span className="hidden sm:inline">Fechar</span>
+          </button>
+        </div>
+      </header>
+
+      {/* CORPO EM DUAS COLUNAS RESPONSIVAS: CONTEÚDO + INSPETOR */}
+      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        {/* COLUNA PRINCIPAL: CONTEÚDO */}
+        <div
+          className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-10"
+          onClick={() => {
+            if (openMenu) setOpenMenu(null);
+            if (triggerMenu) setTriggerMenu(null);
+          }}
+        >
+          <div className="mx-auto max-w-3xl">
+            {/* Título editável */}
+            <input
+              value={titleDraft}
+              onChange={(e) => {
+                setTitleDraft(e.target.value);
+                scheduleAutoSave();
+              }}
+              className="mb-3 w-full bg-transparent text-2xl font-bold tracking-tight text-zinc-100 placeholder:text-zinc-600 focus:outline-none md:text-3xl"
+              placeholder="Título do Knowledge Card"
+            />
+
+            {/* Prévia fiel da Observação / Pegadinha quando visível */}
+            {callout.visible !== false && (callout.text ?? '').trim().length > 0 && (
+              <CalloutBadge config={callout} theme={theme} className="mb-4" />
+            )}
+
+            {/* TOOLBAR RICA FIXA */}
+            {editor && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="sticky top-0 z-20 mb-5 flex flex-wrap items-center gap-1 rounded-xl border border-zinc-800/90 bg-[#181C24]/95 p-1.5 shadow-lg backdrop-blur-md"
+              >
+                {[1, 2, 3].map((lvl) => (
+                  <button
+                    key={lvl}
+                    type="button"
+                    onClick={() =>
+                      editor.chain().focus().toggleHeading({ level: lvl as 1 | 2 | 3 }).run()
+                    }
+                    className={`rounded-lg px-2 py-1 text-[11px] font-bold transition ${
+                      editor.isActive('heading', { level: lvl })
+                        ? 'bg-indigo-600 text-white'
+                        : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'
+                    }`}
+                  >
+                    H{lvl}
+                  </button>
+                ))}
+
+                <div className="mx-0.5 h-4 w-px bg-zinc-800" />
+
+                <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={`rounded-lg p-1.5 ${editor.isActive('bold') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Negrito (Ctrl+B)"><Bold className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={`rounded-lg p-1.5 ${editor.isActive('italic') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Itálico (Ctrl+I)"><Italic className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={`rounded-lg p-1.5 ${editor.isActive('underline') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Sublinhado (Ctrl+U)"><UnderlineIcon className="h-3.5 w-3.5" /></button>
+
+                <div className="relative">
+                  <button type="button" onClick={() => setOpenMenu(openMenu === 'color' ? null : 'color')} className="rounded-lg p-1.5 text-zinc-300 hover:bg-zinc-800" title="Cor do texto">
+                    <Palette className="h-3.5 w-3.5" />
+                  </button>
+                  {openMenu === 'color' && (
+                    <div className="absolute left-0 top-full z-30 mt-2 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
+                      {TEXT_COLORS.map((hex) => (
+                        <button key={hex} type="button" onClick={() => { editor.chain().focus().setColor(hex).run(); setOpenMenu(null); }} className="h-4 w-4 rounded-full border border-zinc-700 hover:scale-125" style={{ backgroundColor: hex }} />
+                      ))}
+                      <button type="button" onClick={() => { editor.chain().focus().unsetColor().run(); setOpenMenu(null); }} className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">Reset</button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="relative">
+                  <button type="button" onClick={() => setOpenMenu(openMenu === 'highlight' ? null : 'highlight')} className={`rounded-lg p-1.5 ${editor.isActive('highlight') ? 'bg-amber-500/20 text-amber-300' : 'text-amber-300 hover:bg-zinc-800'}`} title="Marca-texto">
+                    <Highlighter className="h-3.5 w-3.5" />
+                  </button>
+                  {openMenu === 'highlight' && (
+                    <div className="absolute left-0 top-full z-30 mt-2 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
+                      {HIGHLIGHT_COLORS.map((hex) => (
+                        <button key={hex} type="button" onClick={() => { editor.chain().focus().toggleHighlight({ color: hex }).run(); setOpenMenu(null); }} className="h-4 w-4 rounded border border-zinc-700 hover:scale-125" style={{ backgroundColor: hex }} />
+                      ))}
+                      <button type="button" onClick={() => { editor.chain().focus().unsetHighlight().run(); setOpenMenu(null); }} className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">Limpar</button>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => editor.chain().focus().toggleMark('studyTape').run()}
+                  className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold transition ${
+                    editor.isActive('studyTape')
+                      ? 'bg-amber-500 text-zinc-950'
+                      : 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
+                  }`}
+                  title="Fita de ocultação para memorização ativa"
+                >
+                  <EyeOff className="h-3 w-3" /> Fita
+                </button>
+
+                <div className="mx-0.5 h-4 w-px bg-zinc-800" />
+
+                <button type="button" onClick={() => editor.chain().focus().setTextAlign('left').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Alinhar à esquerda"><AlignLeft className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => editor.chain().focus().setTextAlign('center').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Centralizar"><AlignCenter className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => editor.chain().focus().setTextAlign('right').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Alinhar à direita"><AlignRight className="h-3.5 w-3.5" /></button>
+
+                <div className="mx-0.5 h-4 w-px bg-zinc-800" />
+
+                <button type="button" onClick={() => editor.chain().focus().toggleBulletList().run()} className={`rounded-lg p-1.5 ${editor.isActive('bulletList') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Lista"><List className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => editor.chain().focus().toggleOrderedList().run()} className={`rounded-lg p-1.5 ${editor.isActive('orderedList') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Lista numerada"><ListOrdered className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => editor.chain().focus().toggleTaskList().run()} className={`rounded-lg p-1.5 ${editor.isActive('taskList') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Checklist"><CheckSquare className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => editor.chain().focus().toggleBlockquote().run()} className={`rounded-lg p-1.5 ${editor.isActive('blockquote') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Citação / Lei Seca"><Quote className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={() => editor.chain().focus().toggleCodeBlock().run()} className={`rounded-lg p-1.5 ${editor.isActive('codeBlock') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Código"><Code2 className="h-3.5 w-3.5" /></button>
+
+                <div className="relative">
+                  <button type="button" onClick={() => setOpenMenu(openMenu === 'table' ? null : 'table')} className={`rounded-lg p-1.5 ${editor.isActive('table') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Tabela">
+                    <TableIcon className="h-3.5 w-3.5" />
+                  </button>
+                  {openMenu === 'table' && (
+                    <div className="absolute left-0 top-full z-30 mt-2 flex w-48 flex-col gap-0.5 rounded-xl border border-zinc-800 bg-[#161920] p-1.5 text-xs shadow-2xl">
+                      <button type="button" onClick={() => { editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left font-medium text-indigo-300 hover:bg-zinc-800">Inserir Tabela (3×3)</button>
+                      <button type="button" onClick={() => { editor.chain().focus().addColumnAfter().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-300 hover:bg-zinc-800">+ Coluna à direita</button>
+                      <button type="button" onClick={() => { editor.chain().focus().addRowAfter().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-300 hover:bg-zinc-800">+ Linha abaixo</button>
+                      <button type="button" onClick={() => { editor.chain().focus().deleteColumn().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-400 hover:bg-zinc-800">- Remover coluna</button>
+                      <button type="button" onClick={() => { editor.chain().focus().deleteRow().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-400 hover:bg-zinc-800">- Remover linha</button>
+                      <div className="my-1 h-px bg-zinc-800" />
+                      <button type="button" onClick={() => { editor.chain().focus().deleteTable().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-rose-400 hover:bg-rose-500/15">Excluir tabela</button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="relative">
+                  <button type="button" onClick={() => setOpenMenu(openMenu === 'hr' ? null : 'hr')} className="rounded-lg p-1.5 text-zinc-300 hover:bg-zinc-800" title="Divisória">
+                    <Minus className="h-3.5 w-3.5" />
+                  </button>
+                  {openMenu === 'hr' && (
+                    <div className="absolute left-0 top-full z-30 mt-2 flex w-40 flex-col gap-1 rounded-xl border border-zinc-800 bg-[#161920] p-1.5 text-xs shadow-2xl">
+                      <button type="button" onClick={() => { editor.chain().focus().insertContent({ type: 'horizontalRule', attrs: { class: 'kc-hr-solid' } }).run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-200 hover:bg-zinc-800">Linha Contínua</button>
+                      <button type="button" onClick={() => { editor.chain().focus().insertContent({ type: 'horizontalRule', attrs: { class: 'kc-hr-dashed' } }).run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-200 hover:bg-zinc-800">Linha Tracejada</button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mx-0.5 h-4 w-px bg-zinc-800" />
+
+                <button type="button" onClick={() => editor.chain().focus().insertContent({ type: 'mathBlock', attrs: { latex: '' } }).run()} className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-indigo-300 hover:bg-indigo-500/15" title="Fórmula KaTeX">
+                  <Sigma className="h-3.5 w-3.5" /> Fórmula
+                </button>
+                <button type="button" onClick={() => editor.chain().focus().insertContent({ type: 'mermaidBlock' }).run()} className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/15" title="Diagrama Mermaid">
+                  <GitFork className="h-3.5 w-3.5" /> Diagrama
+                </button>
+
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWikiQuery('');
+                      setOpenMenu(openMenu === 'wikilink' ? null : 'wikilink');
+                    }}
+                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-sky-300 hover:bg-sky-500/15"
+                  >
+                    <Link2 className="h-3.5 w-3.5" /> [[Link]]
+                  </button>
+                  {openMenu === 'wikilink' && (
+                    <div className="absolute right-0 top-full z-30 mt-2 w-64 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
+                      <input
+                        autoFocus
+                        value={wikiQuery}
+                        onChange={(e) => setWikiQuery(e.target.value)}
+                        placeholder="Buscar card para conectar..."
+                        className="mb-2 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100 focus:border-indigo-500 focus:outline-none"
+                      />
+                      <div className="max-h-48 space-y-0.5 overflow-y-auto">
+                        {otherCards.map((target) => (
+                          <button
+                            key={target.id}
+                            type="button"
+                            onClick={() => {
+                              editor
+                                .chain()
+                                .focus()
+                                .insertContent({
+                                  type: 'wikiLink',
+                                  attrs: { cardId: target.id, label: target.title },
+                                })
+                                .run();
+                              setOpenMenu(null);
+                            }}
+                            className="block w-full truncate rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-200 hover:bg-indigo-600/20 hover:text-indigo-200"
+                          >
+                            {target.title}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <label className="flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-zinc-300 hover:bg-zinc-800">
+                  <Paperclip className="h-3.5 w-3.5" /> Mídia
+                  <input type="file" accept="image/*,application/pdf,audio/*" className="hidden" onChange={handleAttachFile} />
+                </label>
+              </div>
+            )}
+
+            {/* ÁREA DE ESCRITA COM TIPOGRAFIA PERSONALIZADA EM TEMPO REAL */}
+            <div style={typoStyle}>
+              <EditorContent editor={editor} />
+            </div>
           </div>
         </div>
 
-        {/* BACKLINKS */}
-        {backlinks.length > 0 && (
-          <div className="mt-7 border-t border-zinc-800/80 pt-5">
-            <h4 className="mb-2.5 text-xs font-semibold uppercase tracking-wider text-zinc-400">
-              Mencionado em ({backlinks.length})
-            </h4>
-            <div className="space-y-1.5">
-              {backlinks.map((source) => (
-                <div
-                  key={source.id}
-                  className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900/60 px-3.5 py-2 text-xs text-zinc-200"
-                >
-                  <button
-                    type="button"
-                    onClick={() => openCard(source.id)}
-                    className="min-w-0 flex-1 truncate text-left font-medium hover:text-indigo-300"
-                  >
-                    {source.title}
-                  </button>
-                  <div className="ml-2 flex shrink-0 items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => openSecondaryCard(source.id)}
-                      className="rounded px-1.5 py-0.5 text-[10px] text-zinc-400 hover:bg-zinc-800 hover:text-indigo-300"
-                      title="Abrir lado a lado"
-                    >
-                      Split
-                    </button>
-                    <ArrowUpRight className="h-3.5 w-3.5 text-zinc-500" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+        {/* COLUNA LATERAL DE GRUPOS (APARÊNCIA, TIPOGRAFIA, DESTAQUES, ESTUDO, CONEXÕES, METADADOS E AÇÕES) */}
+        {showInspector && (
+          <EditorInspectorPanel
+            fullCard={fullCard}
+            onOpenNotebookModal={() => setIsNotebookModalOpen(true)}
+            onAddAttachment={handleAddAttachmentFromManager}
+            onRemoveAttachment={handleRemoveAttachment}
+            onCloseEditor={onClose}
+          />
         )}
       </div>
 
-      {/* MENU FLUTUANTE NO CURSOR: SLASH COMMANDS (/) E AUTOCOMPLETE ([[) */}
+      {/* MENU FLUTUANTE NO CURSOR: / E [[ */}
       {triggerMenu && (
         <div
           style={{ top: triggerMenu.top, left: triggerMenu.left }}
@@ -1420,7 +1185,6 @@ export function KnowledgeCardEditorPane({
         <div
           style={{ top: bubbleMenu.top, left: bubbleMenu.left }}
           onMouseDown={(e) => {
-            // Permite clicar no input de flashcard sem perder foco
             if ((e.target as HTMLElement).tagName !== 'INPUT') e.preventDefault();
           }}
           className="fixed z-[85] rounded-xl border border-zinc-700/90 bg-[#161920]/98 p-1.5 shadow-2xl backdrop-blur-xl"
@@ -1468,30 +1232,9 @@ export function KnowledgeCardEditorPane({
             </div>
           ) : (
             <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => editor.chain().focus().toggleBold().run()}
-                className={`rounded-lg p-1.5 ${editor.isActive('bold') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`}
-                title="Negrito"
-              >
-                <Bold className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => editor.chain().focus().toggleHighlight({ color: '#fde047' }).run()}
-                className={`rounded-lg p-1.5 ${editor.isActive('highlight') ? 'bg-amber-500/25 text-amber-300' : 'text-amber-300 hover:bg-zinc-800'}`}
-                title="Destacar"
-              >
-                <Highlighter className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => editor.chain().focus().toggleBlockquote().run()}
-                className={`rounded-lg p-1.5 ${editor.isActive('blockquote') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`}
-                title="Citação"
-              >
-                <Quote className="h-3.5 w-3.5" />
-              </button>
+              <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={`rounded-lg p-1.5 ${editor.isActive('bold') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Negrito"><Bold className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => editor.chain().focus().toggleHighlight({ color: '#fde047' }).run()} className={`rounded-lg p-1.5 ${editor.isActive('highlight') ? 'bg-amber-500/25 text-amber-300' : 'text-amber-300 hover:bg-zinc-800'}`} title="Destacar"><Highlighter className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => editor.chain().focus().toggleBlockquote().run()} className={`rounded-lg p-1.5 ${editor.isActive('blockquote') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Citação"><Quote className="h-3.5 w-3.5" /></button>
 
               <div className="mx-0.5 h-4 w-px bg-zinc-700" />
 
@@ -1499,7 +1242,7 @@ export function KnowledgeCardEditorPane({
                 type="button"
                 onClick={handleWrapCloze}
                 className="flex items-center gap-1 rounded-lg bg-amber-500/20 px-2 py-1 text-[11px] font-semibold text-amber-300 transition hover:bg-amber-500 hover:text-zinc-950"
-                title="Criar lacuna de memorização {{...}} para revisão ativa"
+                title="Criar lacuna {{...}}"
               >
                 <Braces className="h-3.5 w-3.5" /> Lacuna
               </button>
@@ -1511,18 +1254,18 @@ export function KnowledgeCardEditorPane({
                   setQuickFlashcardMode(true);
                 }}
                 className="flex items-center gap-1 rounded-lg bg-indigo-600/20 px-2 py-1 text-[11px] font-semibold text-indigo-300 transition hover:bg-indigo-600 hover:text-white"
-                title="Transformar frase selecionada em Flashcard"
+                title="Transformar frase em Flashcard"
               >
-                <Brain className="h-3.5 w-3.5" /> Virar Flashcard
+                <Brain className="h-3.5 w-3.5" /> Flashcard
               </button>
 
               <button
                 type="button"
                 onClick={handleExtractToNewCard}
                 className="flex items-center gap-1 rounded-lg bg-emerald-600/20 px-2 py-1 text-[11px] font-semibold text-emerald-300 transition hover:bg-emerald-600 hover:text-white"
-                title="Extrair trecho para um novo card conectado no Canvas"
+                title="Extrair trecho para novo card conectado"
               >
-                <Scissors className="h-3.5 w-3.5" /> Extrair Card
+                <Scissors className="h-3.5 w-3.5" /> Extrair
               </button>
             </div>
           )}

@@ -480,6 +480,8 @@ function CanvasInner() {
         }
       }
 
+      const isAnyInlineEditing = Boolean(inlineEditingCardId || editingTextNodeId);
+
       for (const cn of canvasNodes) {
         const prev = prevMap.get(cn.id);
         const offset = panorama.nodeOffsets.get(cn.id) ?? { dx: 0, dy: 0 };
@@ -488,6 +490,7 @@ function CanvasInner() {
         if (cn.nodeType === 'group') {
           if (!matchesHierarchyContext(cn, selectedHierarchyId, hierarchy)) continue;
           next.push({
+            className: isAnyInlineEditing ? 'kc-edit-dimmed' : undefined,
             id: cn.id,
             type: 'canvasGroup',
             position: displayPos,
@@ -503,6 +506,7 @@ function CanvasInner() {
           if (!matchesHierarchyContext(cn, selectedHierarchyId, hierarchy)) continue;
           const isEditingThis = editingTextNodeId === cn.id;
           next.push({
+            className: isAnyInlineEditing && !isEditingThis ? 'kc-edit-dimmed' : undefined,
             id: cn.id,
             type: 'canvasText',
             position: displayPos,
@@ -518,6 +522,7 @@ function CanvasInner() {
         if (cn.nodeType === 'image') {
           if (!matchesHierarchyContext(cn, selectedHierarchyId, hierarchy)) continue;
           next.push({
+            className: isAnyInlineEditing ? 'kc-edit-dimmed' : undefined,
             id: cn.id,
             type: 'canvasImage',
             position: displayPos,
@@ -544,6 +549,7 @@ function CanvasInner() {
           type: 'knowledgeCard',
           position: displayPos,
           zIndex: isEditingThis ? 100 : undefined,
+          className: isAnyInlineEditing && !isEditingThis ? 'kc-edit-dimmed' : undefined,
           selected: prev?.selected ?? false,
           hidden: prev?.hidden ?? false,
           style: isAutoCard
@@ -622,9 +628,120 @@ function CanvasInner() {
     });
   }, [canvasEdges, canvasNodes, cardsById, hierarchy, selectedHierarchyId, setEdges]);
 
+  // Foco e Zoom Automático durante a edição inline + restauração consciente do viewport
+  const preEditViewportRef = useRef<Viewport | null>(null);
+  const manualMoveDuringEditRef = useRef(false);
+  const isProgrammaticMoveRef = useRef(false);
+  const activeEditTargetNodeId = useMemo(() => {
+    if (editingTextNodeId) return editingTextNodeId;
+    if (inlineEditingCardId) {
+      return (
+        canvasNodes.find(
+          (n) => n.nodeType === 'knowledgeCard' && n.cardId === inlineEditingCardId
+        )?.id ?? null
+      );
+    }
+    return null;
+  }, [editingTextNodeId, inlineEditingCardId, canvasNodes]);
+
+  const prevEditTargetRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const prevTarget = prevEditTargetRef.current;
+    prevEditTargetRef.current = activeEditTargetNodeId;
+
+    // 1. Iniciando edição direta em um Card ou Texto Livre
+    if (activeEditTargetNodeId && prevTarget !== activeEditTargetNodeId) {
+      // Guarda a câmera original apenas na entrada (se alternou direto de um card a outro, mantém a original)
+      if (!prevTarget) {
+        preEditViewportRef.current = getViewport();
+        manualMoveDuringEditRef.current = false;
+      }
+
+      const timer = setTimeout(() => {
+        const container = containerRef.current;
+        const targetNode = getNodes().find((n) => n.id === activeEditTargetNodeId);
+        if (!container || !targetNode) return;
+
+        const rect = container.getBoundingClientRect();
+        const nodeW =
+          targetNode.measured?.width ??
+          (typeof targetNode.style?.width === 'number' ? targetNode.style.width : 340);
+        const nodeH =
+          targetNode.measured?.height ??
+          (typeof targetNode.style?.height === 'number' && targetNode.style.height > 0
+            ? targetNode.style.height
+            : 220);
+
+        // Zoom confortável (sem exagerar na aproximação), respeitando espaço para a barra flutuante acima
+        const fitW = (rect.width * 0.62) / Math.max(180, nodeW);
+        const fitH = (rect.height * 0.58) / Math.max(120, nodeH);
+        const currentZoom = getViewport().zoom;
+        const targetZoom = Math.max(
+          0.95,
+          Math.min(1.22, Math.max(currentZoom, Math.min(fitW, fitH)))
+        );
+
+        const nodeCenterX = targetNode.position.x + nodeW / 2;
+        const nodeCenterY = targetNode.position.y + nodeH / 2;
+
+        // Desloca levemente para baixo (+24px) para acomodar confortavelmente a barra de formatação no topo do card
+        const nextVp: Viewport = {
+          x: Math.round((rect.width / 2 - nodeCenterX * targetZoom) * 10) / 10,
+          y: Math.round((rect.height / 2 + 24 - nodeCenterY * targetZoom) * 10) / 10,
+          zoom: Math.round(targetZoom * 1000) / 1000,
+        };
+
+        isProgrammaticMoveRef.current = true;
+        setViewport(nextVp, { duration: 320 });
+        setLiveViewport(nextVp);
+        setTimeout(() => {
+          isProgrammaticMoveRef.current = false;
+        }, 420);
+      }, 45);
+
+      return () => clearTimeout(timer);
+    }
+
+    // 2. Finalizando ou cancelando edição
+    if (!activeEditTargetNodeId && prevTarget) {
+      const savedVp = preEditViewportRef.current;
+      const movedManually = manualMoveDuringEditRef.current;
+      preEditViewportRef.current = null;
+      manualMoveDuringEditRef.current = false;
+
+      if (!savedVp) return;
+
+      if (!movedManually) {
+        isProgrammaticMoveRef.current = true;
+        setViewport(savedVp, { duration: 300 });
+        setLiveViewport(savedVp);
+        setTimeout(() => {
+          isProgrammaticMoveRef.current = false;
+        }, 380);
+      } else {
+        addToast(
+          {
+            message: 'Posição atual mantida após edição',
+            action: {
+              label: 'Restaurar visão anterior',
+              onClick: () => {
+                setViewport(savedVp, { duration: 320 });
+                setLiveViewport(savedVp);
+              },
+            },
+          },
+          4200
+        );
+      }
+    }
+  }, [activeEditTargetNodeId, getNodes, getViewport, setViewport, addToast]);
+
   // Limpa histórico/seleções e reenquadra a câmera com margens seguras ao trocar de contexto
   const prevContextKeyRef = useRef<string | null>(null);
   useEffect(() => {
+    preEditViewportRef.current = null;
+    manualMoveDuringEditRef.current = false;
     historyRef.current = { past: [], future: [] };
     setCanUndo(false);
     setCanRedo(false);
@@ -1579,6 +1696,12 @@ function CanvasInner() {
         onPaneContextMenu={handlePaneContextMenu}
         onInit={(instance) => {
           setLiveViewport(instance.getViewport());
+        }}
+        onMoveStart={(event) => {
+          // React Flow envia event !== null somente quando o usuário interage com mouse/toque/scroll
+          if (activeEditTargetNodeId && event && !isProgrammaticMoveRef.current) {
+            manualMoveDuringEditRef.current = true;
+          }
         }}
         onMove={(_, vp) => {
           setLiveViewport(vp);

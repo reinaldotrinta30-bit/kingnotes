@@ -705,3 +705,15 @@ html[data-custom-font="active"] .book-prose {
 html[data-custom-font="active"] .kc-free-text-prose {
   font-family: var(--kc-custom-font), var(--font-sans), sans-serif !important;
 }
+
+/* ============================================================================
+   MODO FOCO DE EDIÇÃO INLINE NO CANVAS (REDUÇÃO SUTIL DE DISTRAÇÕES)
+   ============================================================================ */
+.kc-edit-dimmed {
+  opacity: 0.44;
+  transition: opacity 220ms ease;
+}
+
+.kc-edit-dimmed:hover {
+  opacity: 0.85;
+}

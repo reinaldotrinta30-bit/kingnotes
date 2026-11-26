@@ -32,11 +32,12 @@ import {
   Quote,
   Check,
   EyeOff,
-  PanelRightOpen,
+  Maximize2,
   List,
   Palette,
 } from 'lucide-react';
 import { FullKnowledgeCard } from '@/domains/knowledge/types';
+import { DEFAULT_CARD_TYPOGRAPHY, resolveCardCallout } from '@/domains/knowledge/utils/defaults';
 import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryFactory';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
 import { useUiStore } from '@/domains/ui/store/useUiStore';
@@ -44,7 +45,10 @@ import { MathBlock } from '@/domains/knowledge/extensions/MathBlock';
 import { MermaidBlock } from '@/domains/knowledge/extensions/MermaidBlock';
 import { WikiLinkNode, extractOutgoingLinkIds } from '@/domains/knowledge/extensions/WikiLinkNode';
 import { StudyTapeMark } from '@/domains/knowledge/extensions/StudyTapeMark';
-import { setCardPreviewCache } from './CardRichPreview';
+import { buildTypographyCssVars, setCardPreviewCache } from './CardRichPreview';
+import { TypographyPopover } from './TypographyPopover';
+import { CalloutCustomizerPopover } from './CalloutCustomizerPopover';
+
 const lowlight = createLowlight(common);
 
 const InlineHorizontalRule = HorizontalRule.extend({
@@ -97,7 +101,7 @@ interface InlineCardEditorProps {
 
 export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCardEditorProps) {
   const { cardsById, updateCardMeta, saveCardContent } = useKnowledgeStore();
-  const addToast = useUiStore((s) => s.addToast);
+  const { addToast, theme } = useUiStore();
 
   const [fullCard, setFullCard] = useState<FullKnowledgeCard | null>(null);
   const [openPopover, setOpenPopover] = useState<null | 'highlight' | 'color' | 'link'>(null);
@@ -170,7 +174,7 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
     ],
     editorProps: {
       attributes: {
-        class: 'kc-inline-prose min-h-[60px] focus:outline-none',
+        class: 'kc-inline-prose min-h-[44px] focus:outline-none',
       },
       handleKeyDown: (_view, event) => {
         if (event.key === 'Escape') {
@@ -235,6 +239,9 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
 
   if (!meta) return null;
 
+  const typoStyle = buildTypographyCssVars(meta.typography, DEFAULT_CARD_TYPOGRAPHY);
+  const calloutConfig = resolveCardCallout(meta);
+
   const handleAddTag = () => {
     const clean = newTag
       .trim()
@@ -258,14 +265,17 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
       }}
       onDoubleClick={(e) => e.stopPropagation()}
     >
-      {/* BARRA FLUTUANTE DE FORMATAÇÃO ACIMA DO PRÓPRIO CARD */}
+      {/* BARRA FLUTUANTE DE FORMATAÇÃO ACIMA DO CARD (sem overflow clipping para popovers) */}
       {editor && (
         <div
           onMouseDown={(e) => {
-            if ((e.target as HTMLElement).tagName !== 'INPUT') e.preventDefault();
+            const tag = (e.target as HTMLElement).tagName;
+            if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+              e.preventDefault();
+            }
           }}
           onClick={(e) => e.stopPropagation()}
-          className="kc-no-scrollbar absolute -top-11 left-1/2 z-[120] flex w-max max-w-[92vw] -translate-x-1/2 flex-nowrap items-center gap-0.5 overflow-x-auto whitespace-nowrap rounded-xl border border-indigo-500/35 bg-[#161920]/95 px-1.5 py-1 shadow-2xl backdrop-blur-xl"
+          className="absolute -top-12 left-1/2 z-[120] flex w-max max-w-[92vw] -translate-x-1/2 flex-wrap items-center justify-center gap-0.5 rounded-xl border border-indigo-500/35 bg-[#161920]/95 px-1.5 py-1 shadow-2xl backdrop-blur-xl"
         >
           {[1, 2, 3].map((lvl) => (
             <button
@@ -288,6 +298,15 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
           <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={`rounded-lg p-1.5 ${editor.isActive('bold') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Negrito"><Bold className="h-3.5 w-3.5" /></button>
           <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={`rounded-lg p-1.5 ${editor.isActive('italic') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Itálico"><Italic className="h-3.5 w-3.5" /></button>
           <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={`rounded-lg p-1.5 ${editor.isActive('underline') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Sublinhado"><UnderlineIcon className="h-3.5 w-3.5" /></button>
+
+          {/* Tipografia (Fonte, Entrelinha e Parágrafos) */}
+          <TypographyPopover
+            compact
+            value={meta.typography}
+            defaults={DEFAULT_CARD_TYPOGRAPHY}
+            onChange={(next) => updateCardMeta(cardId, { typography: next })}
+            onReset={() => updateCardMeta(cardId, { typography: undefined })}
+          />
 
           {/* Marca-texto */}
           <div className="relative">
@@ -319,7 +338,7 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
             )}
           </div>
 
-          {/* Fita de Ocultação (Freenotes / StarNotes) */}
+          {/* Fita de Ocultação */}
           <button
             type="button"
             onClick={() => editor.chain().focus().toggleMark('studyTape').run()}
@@ -328,7 +347,7 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
                 ? 'bg-amber-500 text-zinc-950'
                 : 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
             }`}
-            title="Aplicar Fita de Ocultação no texto selecionado (para memorização)"
+            title="Aplicar Fita de Ocultação no texto selecionado"
           >
             <EyeOff className="h-3 w-3" /> Fita
           </button>
@@ -377,7 +396,6 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
 
           <div className="mx-0.5 h-4 w-px bg-zinc-800" />
 
-          {/* Abrir Painel de Anexos / Flashcards (opcional) */}
           <button
             type="button"
             onClick={() => {
@@ -385,12 +403,11 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
               onOpenDetails();
             }}
             className="rounded-lg p-1.5 text-zinc-300 hover:bg-zinc-800 hover:text-indigo-300"
-            title="Abrir Anexos (PDF/Áudio), Flashcards e Split View"
+            title="Abrir Edição Avançada (Anexos, Flashcards e Metadados)"
           >
-            <PanelRightOpen className="h-3.5 w-3.5" />
+            <Maximize2 className="h-3.5 w-3.5" />
           </button>
 
-          {/* Concluir Edição Inline */}
           <button
             type="button"
             onClick={() => {
@@ -410,24 +427,43 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
         value={meta.title}
         onChange={(e) => updateCardMeta(cardId, { title: e.target.value })}
         placeholder="Título do Card..."
-        className="mb-2 w-full bg-transparent text-[15px] font-bold tracking-tight text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
+        className="mb-1.5 w-full bg-transparent text-[15px] font-bold tracking-tight text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
       />
 
-      {/* CONTEÚDO RICO EDITÁVEL DIRETO NO CARD */}
-      <div className="kc-no-scrollbar min-h-0 flex-1 cursor-text overflow-y-auto">
+      {/* CONTEÚDO RICO COM TIPOGRAFIA EM TEMPO REAL */}
+      <div style={typoStyle} className="kc-no-scrollbar min-h-0 flex-1 cursor-text overflow-y-auto">
         <EditorContent editor={editor} />
       </div>
 
-      {/* NOTA RÁPIDA / PEGADINHA INLINE */}
-      <input
-        value={meta.notes}
-        onChange={(e) => updateCardMeta(cardId, { notes: e.target.value })}
-        placeholder="Nota / pegadinha de banca..."
-        className="mt-2 w-full rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-2.5 py-1 text-[11px] text-amber-200 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none"
-      />
+      {/* OBSERVAÇÃO RÁPIDA / PEGADINHA INLINE + PERSONALIZADOR */}
+      <div className="mt-2 flex items-center gap-1.5">
+        <input
+          value={calloutConfig.text ?? ''}
+          onChange={(e) =>
+            updateCardMeta(cardId, {
+              notes: e.target.value,
+              callout: { ...calloutConfig, text: e.target.value },
+            })
+          }
+          placeholder="Nota / pegadinha de banca..."
+          className="min-w-0 flex-1 rounded-lg border border-amber-500/25 bg-amber-500/[0.06] px-2.5 py-1 text-[11px] text-amber-200 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none"
+        />
+        <CalloutCustomizerPopover
+          compact
+          align="right"
+          value={calloutConfig}
+          theme={theme}
+          onChange={(next) =>
+            updateCardMeta(cardId, {
+              notes: next.text ?? '',
+              callout: next,
+            })
+          }
+        />
+      </div>
 
       {/* TAGS INLINE */}
-      <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-zinc-800/70 pt-2">
+      <div className="mt-2 flex flex-wrap items-center gap-1 border-t border-zinc-800/70 pt-1.5">
         {meta.tags.map((tag) => (
           <span
             key={tag}

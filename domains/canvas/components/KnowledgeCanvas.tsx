@@ -59,6 +59,8 @@ import {
   AlignRight,
   AlignJustify,
   ArrowUpRightFromSquare,
+  Minimize2,
+  FileType,
   Minus,
 } from 'lucide-react';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
@@ -75,6 +77,13 @@ import { GroupNode } from './GroupNode';
 import { CanvasImageNode } from './CanvasImageNode';
 import { CanvasTextNode } from './CanvasTextNode';
 import { PanoramaSectionNode } from './PanoramaSectionNode';
+import { TypographyPopover } from './TypographyPopover';
+import { CalloutCustomizerPopover } from './CalloutCustomizerPopover';
+import {
+  DEFAULT_CARD_TYPOGRAPHY,
+  DEFAULT_TEXT_TYPOGRAPHY,
+  resolveCardCallout,
+} from '@/domains/knowledge/utils/defaults';
 import {
   computePanoramaLayout,
   syncActiveProjectionOffsets,
@@ -143,6 +152,7 @@ function CanvasInner() {
     theme,
     preferences,
     addToast,
+    openConfirm,
     focusRequest,
     clearFocusRequest,
     triggerCardHighlight,
@@ -177,9 +187,12 @@ function CanvasInner() {
     createCanvasText,
     duplicateCanvasText,
     promoteTextNodeToCard,
+    convertCardToTextNode,
+    undoConvertCardToText,
     persistNodePositions,
     addCanvasEdge,
     updateCanvasEdgesBulk,
+    updateCardMeta,
     updateCardsMetaBulk,
     deleteCanvasSelection,
     duplicateCanvasNodes,
@@ -525,6 +538,7 @@ function CanvasInner() {
         }
 
         const isEditingThis = inlineEditingCardId === card.id;
+        const isAutoCard = cn.sizingMode === 'auto';
         next.push({
           id: cn.id,
           type: 'knowledgeCard',
@@ -532,12 +546,16 @@ function CanvasInner() {
           zIndex: isEditingThis ? 100 : undefined,
           selected: prev?.selected ?? false,
           hidden: prev?.hidden ?? false,
-          style: {
-            width: cn.width || 350,
-            height: cn.height || 240,
-          },
+          style: isAutoCard
+            ? { width: cn.width || 340 }
+            : {
+                width: cn.width || 350,
+                height: cn.height || 240,
+              },
           data: {
             card,
+            sizingMode: cn.sizingMode ?? 'custom',
+            padding: cn.padding ?? 'md',
             isCollapsed: (prev?.data as { isCollapsed?: boolean } | undefined)?.isCollapsed ?? false,
             onOpen: openCard,
             onSaveViewport: saveViewport,
@@ -746,6 +764,10 @@ function CanvasInner() {
   );
 
   const firstSelectedCard = selectedCardIds[0] ? cardsById[selectedCardIds[0]] : undefined;
+  const firstSelectedCardCanvasNode =
+    selectedCardNodes.length === 1
+      ? canvasNodes.find((n) => n.id === selectedCardNodes[0].id) ?? null
+      : null;
   const activeGroupRecord =
     selectedGroupNodes.length === 1 &&
     selectedCardNodes.length === 0 &&
@@ -1218,7 +1240,7 @@ function CanvasInner() {
     title?: string
   ) => {
     pushHistorySnapshot();
-    const pos = getSmartViewportPos(350, 240);
+    const pos = getSmartViewportPos(340, 180);
     const id = await createCardOnCanvas({
       x: pos.x,
       y: pos.y,
@@ -1658,7 +1680,7 @@ function CanvasInner() {
         {/* BARRA CONTEXTUAL 1: CARDS SELECIONADOS */}
         {showCardSelectionToolbar && (
           <Panel position="top-center" className="mt-3 !max-w-none">
-            <div className="kc-no-scrollbar flex w-max max-w-[94vw] flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap rounded-2xl border border-indigo-500/40 bg-[#161920]/95 px-2.5 py-1.5 shadow-2xl backdrop-blur-xl">
+            <div className="flex w-max max-w-[95vw] flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-indigo-500/40 bg-[#161920]/95 px-2.5 py-1.5 shadow-2xl backdrop-blur-xl">
               <span className="rounded-lg bg-indigo-500/15 px-2 py-1 text-[11px] font-semibold text-indigo-300">
                 {selectedCardNodes.length}{' '}
                 {selectedCardNodes.length === 1 ? 'card' : 'cards'}
@@ -1666,6 +1688,7 @@ function CanvasInner() {
 
               <div className="h-4 w-px bg-zinc-800" />
 
+              {/* Cores */}
               <div className="flex items-center gap-1.5 px-0.5">
                 {CARD_COLOR_OPTIONS.map((c) => (
                   <button
@@ -1681,6 +1704,72 @@ function CanvasInner() {
               </div>
 
               <div className="h-4 w-px bg-zinc-800" />
+
+              {/* Tipografia por card (Fonte, Entrelinha e Parágrafos) */}
+              <TypographyPopover
+                value={firstSelectedCard?.typography}
+                defaults={DEFAULT_CARD_TYPOGRAPHY}
+                onChange={(next) => updateCardsMetaBulk(selectedCardIds, { typography: next })}
+                onReset={() => updateCardsMetaBulk(selectedCardIds, { typography: undefined })}
+              />
+
+              {/* Observação / Pegadinha personalizável (1 card selecionado) */}
+              {firstSelectedCard && selectedCardIds.length === 1 && (
+                <CalloutCustomizerPopover
+                  value={resolveCardCallout(firstSelectedCard)}
+                  theme={theme}
+                  onChange={(next) =>
+                    updateCardMeta(firstSelectedCard.id, {
+                      notes: next.text ?? '',
+                      callout: next,
+                    })
+                  }
+                />
+              )}
+
+              {/* Ajuste de tamanho Auto vs Fixo + Preenchimento */}
+              {firstSelectedCardCanvasNode && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextMode =
+                        firstSelectedCardCanvasNode.sizingMode === 'auto' ? 'custom' : 'auto';
+                      updateCanvasNode(firstSelectedCardCanvasNode.id, {
+                        sizingMode: nextMode,
+                        height:
+                          nextMode === 'auto'
+                            ? 0
+                            : Math.max(160, firstSelectedCardCanvasNode.height || 240),
+                      });
+                    }}
+                    className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition ${
+                      firstSelectedCardCanvasNode.sizingMode === 'auto'
+                        ? 'border-emerald-500/50 bg-emerald-500/15 text-emerald-300'
+                        : 'border-zinc-800 bg-[#0F1115] text-zinc-300 hover:border-indigo-500/60'
+                    }`}
+                    title="Alternar entre ajustar automaticamente ao texto ou tamanho manual"
+                  >
+                    <Minimize2 className="h-3 w-3" />
+                    {firstSelectedCardCanvasNode.sizingMode === 'auto' ? 'Auto' : 'Ajustar'}
+                  </button>
+
+                  <select
+                    value={firstSelectedCardCanvasNode.padding ?? 'md'}
+                    onChange={(e) =>
+                      updateCanvasNode(firstSelectedCardCanvasNode.id, {
+                        padding: e.target.value as CanvasNodePosition['padding'],
+                      })
+                    }
+                    title="Preenchimento interno do card"
+                    className="rounded-lg border border-zinc-800 bg-[#0F1115] px-1.5 py-1 text-[11px] font-medium text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                  >
+                    <option value="sm">Margem: Compacta</option>
+                    <option value="md">Margem: Padrão</option>
+                    <option value="lg">Margem: Ampla</option>
+                  </select>
+                </>
+              )}
 
               <select
                 value={firstSelectedCard?.paperStyle ?? 'plain'}
@@ -1707,6 +1796,7 @@ function CanvasInner() {
                   updateCardsMetaBulk(selectedCardIds, { borderStyle: next });
                 }}
                 className="rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1 text-[11px] font-medium text-zinc-300 hover:border-indigo-500/60"
+                title="Alternar estilo da borda"
               >
                 Borda:{' '}
                 {(firstSelectedCard?.borderStyle ?? 'solid') === 'solid'
@@ -1747,6 +1837,39 @@ function CanvasInner() {
                   title="Envolver todos os itens selecionados em um Grupo"
                 >
                   <Group className="h-3.5 w-3.5" /> Agrupar
+                </button>
+              )}
+
+              {/* Converter Card em Texto Livre */}
+              {firstSelectedCardCanvasNode && firstSelectedCard && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const targetNodeId = firstSelectedCardCanvasNode.id;
+                    openConfirm({
+                      title: 'Converter card em Texto Livre?',
+                      description: `"${firstSelectedCard.title}" terá conteúdo, formatação, cor, nota/pegadinha e conexões preservados como Texto Livre. Enquanto for Texto Livre, sairá da fila de Revisão SM-2 (você pode desfazer ou reconverter em Card quando quiser).`,
+                      confirmLabel: 'Converter em Texto',
+                      onConfirm: async () => {
+                        const result = await convertCardToTextNode(targetNodeId);
+                        if (result) {
+                          addToast({
+                            message: 'Card convertido em Texto Livre com conexões preservadas',
+                            variant: 'success',
+                            action: {
+                              label: 'Desfazer',
+                              onClick: () =>
+                                undoConvertCardToText(result.textNodeId, result.undoBundle),
+                            },
+                          });
+                        }
+                      },
+                    });
+                  }}
+                  className="flex items-center gap-1 rounded-lg bg-amber-500/15 px-2 py-1 text-[11px] font-semibold text-amber-300 transition hover:bg-amber-500 hover:text-zinc-950"
+                  title="Converter este Knowledge Card em Texto Livre preservando conteúdo e conexões"
+                >
+                  <FileType className="h-3.5 w-3.5" /> Virar Texto
                 </button>
               )}
 
@@ -2155,7 +2278,7 @@ function CanvasInner() {
         {/* BARRA CONTEXTUAL 4: TEXTO LIVRE SELECIONADO */}
         {showTextToolbar && activeTextRecord && (
           <Panel position="top-center" className="mt-3 !max-w-none">
-            <div className="kc-no-scrollbar flex w-max max-w-[95vw] flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap rounded-2xl border border-indigo-500/40 bg-[#161920]/95 px-3 py-1.5 shadow-2xl backdrop-blur-xl">
+            <div className="flex w-max max-w-[95vw] flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-indigo-500/40 bg-[#161920]/95 px-3 py-1.5 shadow-2xl backdrop-blur-xl">
               <span className="rounded-lg bg-amber-500/15 px-2 py-1 text-[11px] font-semibold text-amber-300">
                 Texto
               </span>
@@ -2231,36 +2354,30 @@ function CanvasInner() {
 
               <div className="h-4 w-px bg-zinc-800" />
 
-              {/* Tamanho da Fonte */}
-              <div className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-[#0F1115] px-1 py-0.5">
-                <button
-                  type="button"
-                  onClick={() =>
-                    updateCanvasNode(activeTextRecord.id, {
-                      fontSize: Math.max(11, (activeTextRecord.fontSize ?? 15) - 2),
-                    })
-                  }
-                  className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white"
-                  title="Diminuir fonte"
-                >
-                  <Minus className="h-3 w-3" />
-                </button>
-                <span className="w-7 text-center font-mono text-[11px] text-zinc-200">
-                  {activeTextRecord.fontSize ?? 15}
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    updateCanvasNode(activeTextRecord.id, {
-                      fontSize: Math.min(48, (activeTextRecord.fontSize ?? 15) + 2),
-                    })
-                  }
-                  className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-white"
-                  title="Aumentar fonte"
-                >
-                  <Plus className="h-3 w-3" />
-                </button>
-              </div>
+              {/* Tipografia completa (Fonte, Entrelinha, Parágrafos) + Nota/Pegadinha */}
+              <TypographyPopover
+                value={activeTextRecord.typography}
+                legacyFontSize={activeTextRecord.fontSize}
+                defaults={DEFAULT_TEXT_TYPOGRAPHY}
+                onChange={(next) =>
+                  updateCanvasNode(activeTextRecord.id, {
+                    typography: next,
+                    fontSize: next.fontSize,
+                  })
+                }
+                onReset={() =>
+                  updateCanvasNode(activeTextRecord.id, {
+                    typography: undefined,
+                    fontSize: DEFAULT_TEXT_TYPOGRAPHY.fontSize,
+                  })
+                }
+              />
+
+              <CalloutCustomizerPopover
+                value={activeTextRecord.callout ?? { text: '', visible: true }}
+                theme={theme}
+                onChange={(next) => updateCanvasNode(activeTextRecord.id, { callout: next })}
+              />
 
               {/* Alinhamento do Bloco */}
               <div className="flex items-center gap-0.5 rounded-lg border border-zinc-800 bg-[#0F1115] p-0.5">

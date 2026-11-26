@@ -599,29 +599,32 @@ html.paper .kc-paper-cornell {
   height: 0 !important;
 }
 
-/* Tipografia equilibrada dentro do card inline (evita cortes bruscos) */
 .kc-inline-prose {
-  font-size: 13px !important;
-  line-height: 1.55 !important;
+  font-size: var(--kc-font-size, 13px) !important;
+  line-height: var(--kc-line-height, 1.55) !important;
 }
 
 .kc-inline-prose h1 {
-  font-size: 1.25em !important;
-  margin: 0.45em 0 0.25em !important;
+  font-size: 1.32em !important;
+  margin: 0.4em 0 var(--kc-p-spacing, 6px) !important;
 }
 
 .kc-inline-prose h2 {
-  font-size: 1.12em !important;
-  margin: 0.4em 0 0.2em !important;
+  font-size: 1.18em !important;
+  margin: 0.35em 0 var(--kc-p-spacing, 6px) !important;
 }
 
 .kc-inline-prose h3 {
-  font-size: 1.02em !important;
-  margin: 0.45em 0 0.2em !important;
+  font-size: 1.06em !important;
+  margin: 0.35em 0 var(--kc-p-spacing, 6px) !important;
 }
 
 .kc-inline-prose p {
-  margin: 0.25em 0 !important;
+  margin: 0 0 var(--kc-p-spacing, 6px) 0 !important;
+}
+
+.kc-inline-prose p:last-child {
+  margin-bottom: 0 !important;
 }
 
 .kc-inline-prose blockquote {
@@ -653,12 +656,16 @@ html[data-custom-font="active"] .book-prose {
    ============================================================================ */
 .kc-free-text-prose {
   color: inherit !important;
-  font-size: inherit !important;
-  line-height: 1.48 !important;
+  font-size: var(--kc-font-size, inherit) !important;
+  line-height: var(--kc-line-height, 1.48) !important;
 }
 
 .kc-free-text-prose p {
-  margin: 0.2em 0 !important;
+  margin: 0 0 var(--kc-p-spacing, 6px) 0 !important;
+}
+
+.kc-free-text-prose p:last-child {
+  margin-bottom: 0 !important;
 }
 
 .kc-free-text-prose h1 {

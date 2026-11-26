@@ -24,6 +24,8 @@ import {
 } from '../utils/hierarchyContext';
 
 import { unprojectNodePosition } from '@/domains/canvas/utils/panoramaLayout';
+import { DEFAULT_CARD_TYPOGRAPHY, resolveCardCallout } from '../utils/defaults';
+
 
 export type ActiveViewMode = 'canvas' | 'book' | 'review';
 
@@ -143,6 +145,22 @@ interface KnowledgeState {
   }) => Promise<string | null>;
   duplicateCanvasText: (nodeId: string) => Promise<string | null>;
   promoteTextNodeToCard: (nodeId: string) => Promise<string | null>;
+  convertCardToTextNode: (cardNodeId: string) => Promise<{
+    textNodeId: string;
+    undoBundle: {
+      fullCard: FullKnowledgeCard;
+      canvasNode: CanvasNodePosition;
+      edges: CanvasConnection[];
+    };
+  } | null>;
+  undoConvertCardToText: (
+    textNodeId: string,
+    undoBundle: {
+      fullCard: FullKnowledgeCard;
+      canvasNode: CanvasNodePosition;
+      edges: CanvasConnection[];
+    }
+  ) => Promise<void>;
   updateCanvasEdge: (edgeId: string, patch: Partial<CanvasConnection>) => Promise<void>;
   deleteCanvasEdge: (edgeId: string) => Promise<void>;
   renameHierarchyItem: (id: string, title: string) => Promise<void>;
@@ -152,7 +170,14 @@ interface KnowledgeState {
     edges: CanvasConnection[]
   ) => Promise<void>;
   persistNodePositions: (
-    updates: Array<{ id: string; x: number; y: number; width?: number; height?: number }>
+    updates: Array<{
+      id: string;
+      x: number;
+      y: number;
+      width?: number;
+      height?: number;
+      sizingMode?: 'auto' | 'custom';
+    }>
   ) => Promise<void>;
   addCanvasEdge: (
     sourceNodeId: string,
@@ -567,10 +592,12 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       subjectId: chain.subjectId,
       subsubjectId: chain.subsubjectId,
       topicId: chain.topicId,
+      sizingMode: 'auto',
+      padding: 'md',
       x,
       y,
-      width: 350,
-      height: 240,
+      width: 340,
+      height: 0,
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
@@ -673,10 +700,12 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       subjectId: chain.subjectId,
       subsubjectId: chain.subsubjectId,
       topicId: chain.topicId,
+      sizingMode: 'auto',
+      padding: 'md',
       x: posX,
       y: posY,
-      width: 350,
-      height: 240,
+      width: 340,
+      height: 0,
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
@@ -1812,10 +1841,12 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       subjectId,
       subsubjectId,
       topicId,
+      sizingMode: textNode.sizingMode ?? 'auto',
+      padding: textNode.padding ?? 'md',
       x: textNode.x,
       y: textNode.y,
       width: Math.max(320, textNode.width || 350),
-      height: Math.max(200, textNode.height || 240),
+      height: textNode.sizingMode === 'custom' ? Math.max(200, textNode.height || 240) : 0,
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
@@ -1851,6 +1882,186 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     }));
 
     return cardId;
+  },
+
+  convertCardToTextNode: async (cardNodeId) => {
+    const state = get();
+    const cardNode = state.canvasNodes.find(
+      (n) => n.id === cardNodeId && n.nodeType === 'knowledgeCard' && n.cardId
+    );
+    const workspaceId = state.activeWorkspaceId;
+    if (!cardNode || !cardNode.cardId || !workspaceId) return null;
+
+    const repo = getKnowledgeRepository();
+    const fullCard = await repo.getFullCard(cardNode.cardId);
+    if (!fullCard) return null;
+
+    const now = Date.now();
+    const { meta, content } = fullCard;
+    const textNodeId = `txt-${crypto.randomUUID()}`;
+
+    const cardColorToHex: Record<KnowledgeCardMeta['color'], string> = {
+      default: '#6366f1',
+      amber: '#f59e0b',
+      emerald: '#10b981',
+      sky: '#0ea5e9',
+      rose: '#f43f5e',
+      violet: '#8b5cf6',
+    };
+
+    // Preserva o título do card no topo do documento caso ainda não esteja presente no primeiro bloco
+    const existingBlocks = Array.isArray(content.tiptapJson?.content)
+      ? (content.tiptapJson.content as Array<Record<string, unknown>>)
+      : [];
+    const cleanTitle = meta.title.trim();
+    const plainTrimmed = (content.plainText ?? '').trim();
+    const alreadyStartsWithTitle =
+      cleanTitle.length > 0 && plainTrimmed.toLowerCase().startsWith(cleanTitle.toLowerCase());
+
+    const mergedBlocks: Array<Record<string, unknown>> =
+      cleanTitle && !alreadyStartsWithTitle
+        ? [
+            {
+              type: 'heading',
+              attrs: { level: 2 },
+              content: [{ type: 'text', text: cleanTitle }],
+            },
+            ...existingBlocks,
+          ]
+        : existingBlocks.length > 0
+        ? existingBlocks
+        : [{ type: 'paragraph', content: cleanTitle ? [{ type: 'text', text: cleanTitle }] : [] }];
+
+    const mergedPlainText =
+      cleanTitle && !alreadyStartsWithTitle
+        ? [cleanTitle, plainTrimmed].filter(Boolean).join('\n')
+        : plainTrimmed || cleanTitle;
+
+    const resolvedCallout = resolveCardCallout(meta);
+    const hasCalloutContent = Boolean((resolvedCallout.text ?? '').trim());
+
+    const typo = meta.typography ?? { ...DEFAULT_CARD_TYPOGRAPHY };
+    const accentHex = cardColorToHex[meta.color] ?? '#6366f1';
+
+    const textNode: CanvasNodePosition = {
+      id: textNodeId,
+      workspaceId,
+      nodeType: 'text',
+      disciplineId: meta.disciplineId === 'unassigned' ? null : meta.disciplineId,
+      subjectId: meta.subjectId === 'unassigned' ? null : meta.subjectId,
+      subsubjectId: meta.subsubjectId ?? null,
+      topicId: meta.topicId ?? null,
+      color: accentHex,
+      bgColor: accentHex,
+      bgOpacity: meta.color === 'default' ? 'subtle' : 'tinted',
+      borderStyle: meta.borderStyle ?? 'solid',
+      borderWidth: meta.borderWidth ?? 'thin',
+      borderRadius: 'xl',
+      padding: cardNode.padding ?? 'md',
+      sizingMode: cardNode.sizingMode ?? 'auto',
+      typography: typo,
+      fontSize: typo.fontSize ?? DEFAULT_CARD_TYPOGRAPHY.fontSize,
+      callout: hasCalloutContent ? resolvedCallout : undefined,
+      textAlign: 'left',
+      textJson: { type: 'doc', content: mergedBlocks },
+      plainText: mergedPlainText,
+      x: cardNode.x,
+      y: cardNode.y,
+      width: Math.max(220, cardNode.width || 340),
+      height: cardNode.sizingMode === 'custom' ? cardNode.height : 0,
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+      syncStatus: 'local_only',
+      version: 1,
+    };
+
+    // Guarda snapshot das arestas originais para o Desfazer e remapeia todas para o novo Texto Livre
+    const affectedEdges = state.canvasEdges.filter(
+      (e) => e.sourceNodeId === cardNodeId || e.targetNodeId === cardNodeId
+    );
+    const originalEdgesSnapshot = affectedEdges.map((e) => ({ ...e }));
+
+    const updatedEdges = state.canvasEdges.map((edge) => {
+      if (edge.sourceNodeId !== cardNodeId && edge.targetNodeId !== cardNodeId) return edge;
+      return {
+        ...edge,
+        sourceNodeId: edge.sourceNodeId === cardNodeId ? textNodeId : edge.sourceNodeId,
+        targetNodeId: edge.targetNodeId === cardNodeId ? textNodeId : edge.targetNodeId,
+        updatedAt: now,
+        version: edge.version + 1,
+        syncStatus: 'pending_push' as const,
+      };
+    });
+
+    const changedEdges = updatedEdges.filter((e, i) => e !== state.canvasEdges[i]);
+
+    await Promise.all([
+      repo.upsertCanvasNodes([textNode]),
+      ...changedEdges.map((e) => repo.saveCanvasConnection(e)),
+      repo.softDeleteCard(meta.id),
+    ]);
+
+    set((s) => {
+      const nextCards = { ...s.cardsById };
+      delete nextCards[meta.id];
+      return {
+        cardsById: nextCards,
+        canvasNodes: [...s.canvasNodes.filter((n) => n.id !== cardNodeId), textNode],
+        canvasEdges: updatedEdges,
+        activeCardId: s.activeCardId === meta.id ? null : s.activeCardId,
+        activeFullCard: s.activeFullCard?.meta.id === meta.id ? null : s.activeFullCard,
+        secondaryCardId: s.secondaryCardId === meta.id ? null : s.secondaryCardId,
+        secondaryFullCard: s.secondaryFullCard?.meta.id === meta.id ? null : s.secondaryFullCard,
+      };
+    });
+
+    return {
+      textNodeId,
+      undoBundle: {
+        fullCard,
+        canvasNode: { ...cardNode },
+        edges: originalEdgesSnapshot,
+      },
+    };
+  },
+
+  undoConvertCardToText: async (textNodeId, undoBundle) => {
+    const repo = getKnowledgeRepository();
+    const now = Date.now();
+    const restoredMeta: KnowledgeCardMeta = {
+      ...undoBundle.fullCard.meta,
+      deletedAt: null,
+      updatedAt: now,
+    };
+    const restoredNode: CanvasNodePosition = {
+      ...undoBundle.canvasNode,
+      deletedAt: null,
+      updatedAt: now,
+    };
+    const restoredEdges = undoBundle.edges.map((e) => ({
+      ...e,
+      deletedAt: null,
+      updatedAt: now,
+    }));
+
+    const restoredEdgeMap = new Map(restoredEdges.map((e) => [e.id, e]));
+
+    await Promise.all([
+      repo.saveCard(restoredMeta, undoBundle.fullCard.content),
+      repo.upsertCanvasNodes([restoredNode]),
+      ...restoredEdges.map((e) => repo.saveCanvasConnection(e)),
+      repo.deleteCanvasNode(textNodeId),
+    ]);
+
+    set((s) => ({
+      cardsById: { ...s.cardsById, [restoredMeta.id]: restoredMeta },
+      canvasNodes: [
+        ...s.canvasNodes.filter((n) => n.id !== textNodeId && n.id !== restoredNode.id),
+        restoredNode,
+      ],
+      canvasEdges: s.canvasEdges.map((e) => restoredEdgeMap.get(e.id) ?? e),
+    }));
   },
 
   renameCanvasGroup: async (groupId: string, label: string) => {

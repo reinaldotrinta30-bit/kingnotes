@@ -1,14 +1,22 @@
 'use client';
 
 import React, { memo, useEffect, useState } from 'react';
-import { Handle, Position, NodeProps, NodeResizer, useReactFlow } from '@xyflow/react';
-import { Pin, Star, Flame, Plus, Minus, Eye, EyeOff, Edit3, PanelRightOpen } from 'lucide-react';
-import { KnowledgeCardMeta } from '@/domains/knowledge/types';
+import {
+  Handle,
+  Position,
+  NodeProps,
+  NodeResizer,
+  useReactFlow,
+  useUpdateNodeInternals,
+} from '@xyflow/react';
+import { Pin, Star, Flame, Plus, Minus, Eye, EyeOff, Maximize2 } from 'lucide-react';
+import { CanvasNodePosition, KnowledgeCardMeta } from '@/domains/knowledge/types';
+import { resolveCardCallout } from '@/domains/knowledge/utils/defaults';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
 import { useUiStore } from '@/domains/ui/store/useUiStore';
-import { ClozeText } from '@/domains/review/components/ClozeText';
 import { InlineCardEditor } from './InlineCardEditor';
 import { CardRichPreview } from './CardRichPreview';
+import { CalloutBadge } from './CalloutBadge';
 import { cn } from '@/lib/utils';
 
 const COLOR_ACCENT: Record<KnowledgeCardMeta['color'], string> = {
@@ -40,8 +48,17 @@ const BORDER_STYLE_CLASS: Record<NonNullable<KnowledgeCardMeta['borderStyle']>, 
   none: '!border-transparent',
 };
 
+const CARD_PADDING_CLASS: Record<NonNullable<CanvasNodePosition['padding']>, string> = {
+  none: 'p-2',
+  sm: 'p-2.5',
+  md: 'p-3.5',
+  lg: 'p-5',
+};
+
 interface CardNodeData {
   card: KnowledgeCardMeta;
+  sizingMode?: 'auto' | 'custom';
+  padding?: CanvasNodePosition['padding'];
   isCollapsed?: boolean;
   onOpen: (cardId: string) => void;
   onSaveViewport?: () => void;
@@ -60,8 +77,10 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
   selected,
 }: NodeProps & { data: CardNodeData }) {
   const { getNodes, getEdges, setNodes, setEdges, fitView } = useReactFlow();
+  const updateNodeInternals = useUpdateNodeInternals();
   const persistNodePositions = useKnowledgeStore((s) => s.persistNodePositions);
   const {
+    theme,
     highlightedCardId,
     canvasRecallMode,
     canvasSpotlight,
@@ -74,7 +93,16 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
   const density = preferences.cardDensity;
   const isZoomedOut = isCanvasZoomedOut;
 
-  const { card, onOpen, onSaveViewport, isCollapsed = false } = data;
+  const {
+    card,
+    sizingMode = 'custom',
+    padding = 'md',
+    onOpen,
+    onSaveViewport,
+    isCollapsed = false,
+  } = data;
+
+  const isAutoSize = sizingMode === 'auto';
   const isEditingInline = inlineEditingCardId === card.id;
   const isHighlighted = highlightedCardId === card.id;
 
@@ -82,6 +110,23 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
   useEffect(() => {
     setIsRevealed(false);
   }, [canvasRecallMode]);
+
+  // Mantém os pontos de conexão sincronizados quando o tamanho automático/tipografia muda
+  useEffect(() => {
+    const t = setTimeout(() => updateNodeInternals(id), 40);
+    return () => clearTimeout(t);
+  }, [
+    id,
+    sizingMode,
+    padding,
+    card.typography?.fontSize,
+    card.typography?.lineHeight,
+    card.typography?.paragraphSpacing,
+    card.callout?.position,
+    card.callout?.visible,
+    isEditingInline,
+    updateNodeInternals,
+  ]);
 
   const matchesSpotlight = (() => {
     if (canvasSpotlight === 'none') return true;
@@ -120,7 +165,10 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
     };
 
     const roots = updatedNodes.filter(
-      (n) => n.type !== 'group' && !allEdges.some((edge) => edge.target === n.id)
+      (n) =>
+        n.type !== 'canvasGroup' &&
+        n.type !== 'panoramaSection' &&
+        !allEdges.some((edge) => edge.target === n.id)
     );
     roots.forEach((r) => traverse(r.id, false));
 
@@ -144,7 +192,9 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
     const allNodes = getNodes();
     const allEdges = getEdges();
     const current = allNodes.find((n) => n.id === id);
-    const selectedNodes = allNodes.filter((n) => n.selected && n.type !== 'group');
+    const selectedNodes = allNodes.filter(
+      (n) => n.selected && n.type !== 'canvasGroup' && n.type !== 'panoramaSection'
+    );
 
     let nodesToFit = [];
     if (current?.selected && selectedNodes.length > 1) {
@@ -173,6 +223,12 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
   const paperClass = PAPER_CLASS[card.paperStyle ?? 'plain'];
   const borderWidthClass = BORDER_WIDTH_CLASS[card.borderWidth ?? 'thin'];
   const borderStyleClass = BORDER_STYLE_CLASS[card.borderStyle ?? 'solid'];
+  const paddingClass = CARD_PADDING_CLASS[padding];
+
+  const callout = resolveCardCallout(card);
+  const calloutVisible = Boolean((callout.text ?? '').trim()) && callout.visible !== false;
+  const calloutPos = callout.position ?? 'bottom';
+  const hasFooterTags = card.tags.length > 0 || (canvasRecallMode && isRevealed);
 
   return (
     <div
@@ -182,8 +238,10 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
         setInlineEditingCardId(card.id);
       }}
       className={cn(
-        'group relative flex h-full w-full flex-col justify-between rounded-2xl p-4 text-zinc-100 shadow-lg backdrop-blur-md transition-all duration-200',
-        'min-h-[160px] min-w-[260px]',
+        'group relative flex w-full flex-col justify-between rounded-2xl text-zinc-100 shadow-lg backdrop-blur-md transition-all duration-200',
+        isAutoSize ? 'h-auto min-h-[72px]' : 'h-full min-h-[84px]',
+        'min-w-[180px]',
+        paddingClass,
         isEditingInline && 'z-50 ring-2 ring-indigo-500/90 shadow-2xl shadow-indigo-500/20',
         borderWidthClass,
         borderStyleClass,
@@ -198,8 +256,8 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
     >
       <NodeResizer
         isVisible={(selected || isEditingInline) && !isZoomedOut}
-        minWidth={260}
-        minHeight={160}
+        minWidth={180}
+        minHeight={72}
         lineClassName="!border-indigo-500/80"
         handleClassName="!h-2.5 !w-2.5 !rounded-sm !border-indigo-400 !bg-[#161920]"
         onResizeEnd={(_, params) => {
@@ -210,6 +268,7 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
               y: Math.round(params.y),
               width: Math.round(params.width),
               height: Math.round(params.height),
+              sizingMode: 'custom',
             },
           ]);
         }}
@@ -236,13 +295,13 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
             type="target"
             position={h.pos}
             id={`t-${h.id}`}
-            className="!h-3 !w-3 !border-2 !border-[#161920] !bg-indigo-400 opacity-0 transition-opacity group-hover:opacity-100"
+            className="!z-40 !h-3 !w-3 !border-2 !border-[#161920] !bg-indigo-400 opacity-0 transition-opacity group-hover:opacity-100"
           />
           <Handle
             type="source"
             position={h.pos}
             id={`s-${h.id}`}
-            className="!h-3 !w-3 !border-2 !border-[#161920] !bg-indigo-400 opacity-0 transition-opacity group-hover:opacity-100"
+            className="!z-40 !h-3 !w-3 !border-2 !border-[#161920] !bg-indigo-400 opacity-0 transition-opacity group-hover:opacity-100"
           />
         </React.Fragment>
       ))}
@@ -253,7 +312,7 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
         </div>
       )}
 
-      {/* MODO 1: EDIÇÃO DIRETA DENTRO DO PRÓPRIO CARD */}
+      {/* MODO 1: EDIÇÃO DIRETA INLINE */}
       {isEditingInline ? (
         <InlineCardEditor
           cardId={card.id}
@@ -266,7 +325,7 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
       ) : isZoomedOut ? (
         /* MODO 2: ZOOM MACRO (< 48%) */
         <div className="flex flex-1 flex-col items-center justify-center p-2 text-center">
-          <h3 className="line-clamp-3 text-[22px] font-bold leading-snug tracking-tight text-zinc-100">
+          <h3 className="line-clamp-3 text-[20px] font-bold leading-snug tracking-tight text-zinc-100">
             {card.title}
           </h3>
           {card.importance === 'critical' && (
@@ -276,40 +335,74 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
           )}
         </div>
       ) : (
-        /* MODO 3: VISUALIZAÇÃO LIMPA NO CANVAS */
+        /* MODO 3: VISUALIZAÇÃO LIMPA E COMPACTA NO CANVAS */
         <>
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div className="mb-2 flex shrink-0 items-start justify-between gap-2">
-              <h3 className="line-clamp-2 text-[15px] font-bold leading-snug tracking-tight text-zinc-100">
+          <div className={cn('flex min-h-0 flex-1 flex-col', !isAutoSize && 'overflow-hidden')}>
+            {/* Cabeçalho do Card */}
+            <div className="mb-1.5 flex shrink-0 items-start justify-between gap-2">
+              <h3 className="line-clamp-2 text-[14.5px] font-bold leading-snug tracking-tight text-zinc-100">
                 {card.title}
               </h3>
               <div className="flex shrink-0 items-center gap-1 text-zinc-400">
                 {card.importance === 'critical' && (
-                  <span title="Alta incidência em prova"><Flame className="h-3.5 w-3.5 text-rose-400" /></span>
+                  <span title="Alta incidência em prova">
+                    <Flame className="h-3.5 w-3.5 text-rose-400" />
+                  </span>
                 )}
-                {card.isPinned && <Pin className="h-3.5 w-3.5 text-indigo-400" />}
-                {card.isFavorite && <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />}
+                {card.isPinned && (
+                  <span title="Card fixado">
+                    <Pin className="h-3.5 w-3.5 text-indigo-400" />
+                  </span>
+                )}
+                {card.isFavorite && (
+                  <span title="Favorito">
+                    <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                  </span>
+                )}
               </div>
             </div>
 
+            {/* Observação no Topo ou como Etiqueta */}
+            {density !== 'compact' && calloutVisible && (calloutPos === 'top' || calloutPos === 'badge') && (
+              <CalloutBadge config={callout} theme={theme} className="mb-2" />
+            )}
+
+            {/* Corpo + Posições Lateral / Inline / Rodapé / Alerta */}
             {density !== 'compact' && (
-              <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+              <div
+                className={cn(
+                  'relative flex min-h-0 flex-1 flex-col',
+                  !isAutoSize && 'overflow-hidden'
+                )}
+              >
                 <div
                   className={cn(
-                    'kc-no-scrollbar min-h-0 flex-1 overflow-y-auto transition-all duration-200',
-                    shouldMaskBody && 'pointer-events-none select-none opacity-35 blur-[7px]'
+                    'kc-no-scrollbar min-h-0 flex-1 transition-all duration-200',
+                    !isAutoSize && 'overflow-y-auto',
+                    shouldMaskBody && 'pointer-events-none select-none opacity-35 blur-[7px]',
+                    calloutVisible && calloutPos === 'side' && 'flex flex-col gap-2 sm:flex-row'
                   )}
                 >
-                  <CardRichPreview
-                    cardId={card.id}
-                    updatedAt={card.updatedAt}
-                    fallbackExcerpt={card.excerpt}
-                  />
+                  <div className="min-w-0 flex-1">
+                    {calloutVisible && calloutPos === 'inline' && (
+                      <CalloutBadge config={callout} theme={theme} className="mb-2" />
+                    )}
 
-                  {card.notes && (
-                    <div className="mt-2.5 rounded-lg border border-amber-500/20 bg-amber-500/[0.06] px-2.5 py-1.5 text-[11px] leading-snug text-amber-200/90">
-                      <span className="font-semibold text-amber-400">Nota: </span>
-                      <ClozeText text={card.notes} />
+                    <CardRichPreview
+                      cardId={card.id}
+                      updatedAt={card.updatedAt}
+                      fallbackExcerpt={card.excerpt}
+                      typography={card.typography}
+                    />
+
+                    {calloutVisible && (calloutPos === 'bottom' || calloutPos === 'alert-box') && (
+                      <CalloutBadge config={callout} theme={theme} className="mt-2" />
+                    )}
+                  </div>
+
+                  {calloutVisible && calloutPos === 'side' && (
+                    <div className="w-full shrink-0 sm:w-[38%] sm:max-w-[165px]">
+                      <CalloutBadge config={callout} theme={theme} />
                     </div>
                   )}
                 </div>
@@ -331,58 +424,64 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
             )}
           </div>
 
-          <div className="mt-2 flex items-center justify-between gap-2 border-t border-zinc-800/80 pt-2">
-            <div className="flex flex-wrap gap-1 overflow-hidden">
-              {card.tags.slice(0, 3).map((tag) => (
-                <span
-                  key={tag}
-                  className="rounded-md bg-zinc-800/90 px-1.5 py-0.5 text-[10px] font-medium text-zinc-300"
-                >
-                  #{tag}
-                </span>
-              ))}
-            </div>
+          {/* RODAPÉ SIMPLIFICADO: sem botão textual "Editar"; apenas tags (se houver) + ícone discreto */}
+          {hasFooterTags ? (
+            <div className="mt-2 flex items-center justify-between gap-2 border-t border-zinc-800/70 pt-1.5">
+              <div className="flex flex-wrap gap-1 overflow-hidden">
+                {card.tags.slice(0, 3).map((tag) => (
+                  <span
+                    key={tag}
+                    className="rounded-md bg-zinc-800/85 px-1.5 py-0.5 text-[10px] font-medium text-zinc-300"
+                  >
+                    #{tag}
+                  </span>
+                ))}
+              </div>
 
-            <div className="flex shrink-0 items-center gap-1">
-              {canvasRecallMode && isRevealed && (
+              <div className="flex shrink-0 items-center gap-0.5">
+                {canvasRecallMode && isRevealed && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsRevealed(false);
+                    }}
+                    className="nodrag nopan flex h-7 w-7 items-center justify-center rounded-lg text-zinc-400 transition hover:bg-zinc-800 hover:text-indigo-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+                    title="Ocultar novamente"
+                    aria-label="Ocultar conteúdo novamente"
+                  >
+                    <EyeOff className="h-3.5 w-3.5" />
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setIsRevealed(false);
+                    onOpen(card.id);
                   }}
-                  className="rounded-md p-1 text-zinc-400 hover:bg-zinc-800 hover:text-indigo-300"
-                  title="Ocultar novamente"
+                  className="nodrag nopan flex h-7 w-7 items-center justify-center rounded-lg text-zinc-400 opacity-60 transition hover:bg-zinc-800/90 hover:text-indigo-300 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+                  title="Edição avançada (tela ampliada, anexos, flashcards e metadados)"
+                  aria-label="Abrir edição avançada do card"
                 >
-                  <EyeOff className="h-3.5 w-3.5" />
+                  <Maximize2 className="h-3.5 w-3.5" />
                 </button>
-              )}
-
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setInlineEditingCardId(card.id);
-                }}
-                className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-indigo-300 opacity-85 transition hover:bg-indigo-500/15 hover:opacity-100"
-                title="Editar diretamente dentro do card (ou duplo clique)"
-              >
-                <Edit3 className="h-3 w-3" /> Editar
-              </button>
-
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onOpen(card.id);
-                }}
-                className="rounded-md p-1 text-zinc-400 opacity-70 transition hover:bg-zinc-800 hover:text-zinc-100 hover:opacity-100"
-                title="Abrir Flashcards, Anexos (PDF/Áudio) e Split View"
-              >
-                <PanelRightOpen className="h-3.5 w-3.5" />
-              </button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpen(card.id);
+              }}
+              className="nodrag nopan absolute bottom-2 right-2 z-20 flex h-7 w-7 items-center justify-center rounded-lg text-zinc-400 opacity-0 transition hover:bg-zinc-800/90 hover:text-indigo-300 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 group-hover:opacity-75 group-focus-within:opacity-100"
+              title="Edição avançada (tela ampliada, anexos, flashcards e metadados)"
+              aria-label="Abrir edição avançada do card"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </>
       )}
     </div>

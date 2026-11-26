@@ -1,13 +1,14 @@
 'use client';
 
 import React, { memo, useEffect, useRef, useState } from 'react';
-import { Handle, Position, NodeProps, NodeResizer } from '@xyflow/react';
+import { Handle, Position, NodeProps, NodeResizer, useUpdateNodeInternals } from '@xyflow/react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Highlight from '@tiptap/extension-highlight';
 import { TextStyle } from '@tiptap/extension-text-style';
 import { Color } from '@tiptap/extension-color';
+import { TextAlign } from '@tiptap/extension-text-align';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import {
@@ -25,10 +26,13 @@ import {
   Check,
 } from 'lucide-react';
 import { CanvasNodePosition } from '@/domains/knowledge/types';
+import { DEFAULT_TEXT_TYPOGRAPHY, resolveTypography } from '@/domains/knowledge/utils/defaults';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
 import { useUiStore } from '@/domains/ui/store/useUiStore';
 import { StudyTapeMark } from '@/domains/knowledge/extensions/StudyTapeMark';
-import { RichDocRenderer } from './CardRichPreview';
+import { RichDocRenderer, buildTypographyCssVars } from './CardRichPreview';
+import { TypographyPopover } from './TypographyPopover';
+import { CalloutBadge } from './CalloutBadge';
 
 const HANDLES = [
   { pos: Position.Top, id: 'top' },
@@ -89,10 +93,18 @@ function hexToRgba(hex: string, alpha: number): string {
 interface FreeTextInlineEditorProps {
   node: CanvasNodePosition;
   onSave: (json: Record<string, unknown>, plainText: string) => void;
+  onTypographyChange: (next: Required<NonNullable<CanvasNodePosition['typography']>>) => void;
+  onTypographyReset: () => void;
   onDone: () => void;
 }
 
-function FreeTextInlineEditor({ node, onSave, onDone }: FreeTextInlineEditorProps) {
+function FreeTextInlineEditor({
+  node,
+  onSave,
+  onTypographyChange,
+  onTypographyReset,
+  onDone,
+}: FreeTextInlineEditorProps) {
   const [openPicker, setOpenPicker] = useState<'color' | 'highlight' | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onSaveRef = useRef(onSave);
@@ -107,6 +119,7 @@ function FreeTextInlineEditor({ node, onSave, onDone }: FreeTextInlineEditorProp
       Underline,
       TextStyle,
       Color,
+      TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Highlight.configure({ multicolor: true }),
       TaskList,
       TaskItem.configure({ nested: true }),
@@ -136,7 +149,6 @@ function FreeTextInlineEditor({ node, onSave, onDone }: FreeTextInlineEditorProp
     return () => clearTimeout(t);
   }, [editor]);
 
-  // Garante persistência imediata ao desmontar/sair da edição
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -181,9 +193,12 @@ function FreeTextInlineEditor({ node, onSave, onDone }: FreeTextInlineEditorProp
     >
       {/* BARRA FLUTUANTE DE FORMATAÇÃO RICA */}
       <div
-        onMouseDown={(e) => e.preventDefault()}
+        onMouseDown={(e) => {
+          const tag = (e.target as HTMLElement).tagName;
+          if (tag !== 'INPUT' && tag !== 'TEXTAREA') e.preventDefault();
+        }}
         onClick={(e) => e.stopPropagation()}
-        className="absolute -top-12 left-1/2 z-[120] flex w-max max-w-[92vw] -translate-x-1/2 items-center gap-0.5 rounded-xl border border-indigo-500/40 bg-[#161920]/95 px-1.5 py-1 shadow-2xl backdrop-blur-xl"
+        className="absolute -top-12 left-1/2 z-[120] flex w-max max-w-[92vw] -translate-x-1/2 flex-wrap items-center justify-center gap-0.5 rounded-xl border border-indigo-500/40 bg-[#161920]/95 px-1.5 py-1 shadow-2xl backdrop-blur-xl"
       >
         {([1, 2, 3] as const).map((lvl) => (
           <button
@@ -199,38 +214,20 @@ function FreeTextInlineEditor({ node, onSave, onDone }: FreeTextInlineEditorProp
 
         <div className="mx-0.5 h-4 w-px bg-zinc-800" />
 
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleBold().run()}
-          className={btn(editor.isActive('bold'))}
-          title="Negrito (Ctrl+B)"
-        >
-          <Bold className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleItalic().run()}
-          className={btn(editor.isActive('italic'))}
-          title="Itálico (Ctrl+I)"
-        >
-          <Italic className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleUnderline().run()}
-          className={btn(editor.isActive('underline'))}
-          title="Sublinhado (Ctrl+U)"
-        >
-          <UnderlineIcon className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleStrike().run()}
-          className={btn(editor.isActive('strike'))}
-          title="Tachado"
-        >
-          <Strikethrough className="h-3.5 w-3.5" />
-        </button>
+        <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={btn(editor.isActive('bold'))} title="Negrito (Ctrl+B)"><Bold className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={btn(editor.isActive('italic'))} title="Itálico (Ctrl+I)"><Italic className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={btn(editor.isActive('underline'))} title="Sublinhado (Ctrl+U)"><UnderlineIcon className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => editor.chain().focus().toggleStrike().run()} className={btn(editor.isActive('strike'))} title="Tachado"><Strikethrough className="h-3.5 w-3.5" /></button>
+
+        {/* Tipografia completa em tempo real */}
+        <TypographyPopover
+          compact
+          value={node.typography}
+          legacyFontSize={node.fontSize}
+          defaults={DEFAULT_TEXT_TYPOGRAPHY}
+          onChange={onTypographyChange}
+          onReset={onTypographyReset}
+        />
 
         <div className="mx-0.5 h-4 w-px bg-zinc-800" />
 
@@ -266,7 +263,7 @@ function FreeTextInlineEditor({ node, onSave, onDone }: FreeTextInlineEditorProp
           )}
         </div>
 
-        {/* Marca-Texto Multicolorido */}
+        {/* Marca-Texto */}
         <div className="relative">
           <button
             type="button"
@@ -298,7 +295,6 @@ function FreeTextInlineEditor({ node, onSave, onDone }: FreeTextInlineEditorProp
           )}
         </div>
 
-        {/* Fita de Ocultação */}
         <button
           type="button"
           onClick={() => editor.chain().focus().toggleMark('studyTape').run()}
@@ -307,45 +303,17 @@ function FreeTextInlineEditor({ node, onSave, onDone }: FreeTextInlineEditorProp
               ? 'bg-amber-500 text-zinc-950'
               : 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
           }`}
-          title="Fita de ocultação para revisão ativa"
+          title="Fita de ocultação"
         >
           <EyeOff className="h-3 w-3" /> Fita
         </button>
 
         <div className="mx-0.5 h-4 w-px bg-zinc-800" />
 
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleBulletList().run()}
-          className={btn(editor.isActive('bulletList'))}
-          title="Lista com marcadores"
-        >
-          <List className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleOrderedList().run()}
-          className={btn(editor.isActive('orderedList'))}
-          title="Lista numerada"
-        >
-          <ListOrdered className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleTaskList().run()}
-          className={btn(editor.isActive('taskList'))}
-          title="Checklist"
-        >
-          <CheckSquare className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={() => editor.chain().focus().toggleBlockquote().run()}
-          className={btn(editor.isActive('blockquote'))}
-          title="Citação / Destaque"
-        >
-          <Quote className="h-3.5 w-3.5" />
-        </button>
+        <button type="button" onClick={() => editor.chain().focus().toggleBulletList().run()} className={btn(editor.isActive('bulletList'))} title="Lista"><List className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => editor.chain().focus().toggleOrderedList().run()} className={btn(editor.isActive('orderedList'))} title="Lista numerada"><ListOrdered className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => editor.chain().focus().toggleTaskList().run()} className={btn(editor.isActive('taskList'))} title="Checklist"><CheckSquare className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => editor.chain().focus().toggleBlockquote().run()} className={btn(editor.isActive('blockquote'))} title="Citação"><Quote className="h-3.5 w-3.5" /></button>
 
         <div className="mx-0.5 h-4 w-px bg-zinc-800" />
 
@@ -381,14 +349,30 @@ export const CanvasTextNode = memo(function CanvasTextNode({
   data,
   selected,
 }: NodeProps & { data: CanvasTextNodeData }) {
+  const updateNodeInternals = useUpdateNodeInternals();
   const persistNodePositions = useKnowledgeStore((s) => s.persistNodePositions);
   const updateCanvasNode = useKnowledgeStore((s) => s.updateCanvasNode);
   const { theme, editingTextNodeId, setEditingTextNodeId } = useUiStore();
   const { node } = data;
 
   const isEditing = editingTextNodeId === id;
+  const resolvedTypo = resolveTypography(node.typography, DEFAULT_TEXT_TYPOGRAPHY, node.fontSize);
+  const typoVars = buildTypographyCssVars(node.typography, DEFAULT_TEXT_TYPOGRAPHY, node.fontSize);
 
-  // Sai da edição se perder o foco/seleção por outro evento
+  useEffect(() => {
+    const t = setTimeout(() => updateNodeInternals(id), 40);
+    return () => clearTimeout(t);
+  }, [
+    id,
+    resolvedTypo.fontSize,
+    resolvedTypo.lineHeight,
+    resolvedTypo.paragraphSpacing,
+    node.callout?.visible,
+    node.callout?.position,
+    isEditing,
+    updateNodeInternals,
+  ]);
+
   useEffect(() => {
     if (!isEditing) return;
     const onGlobalKey = (e: KeyboardEvent) => {
@@ -423,6 +407,8 @@ export const CanvasTextNode = memo(function CanvasTextNode({
       : '#f4f4f5';
 
   const hasContent = Boolean((node.plainText ?? '').trim().length > 0);
+  const hasCallout = Boolean((node.callout?.text ?? '').trim()) && node.callout?.visible !== false;
+  const calloutPos = node.callout?.position ?? 'bottom';
 
   return (
     <div
@@ -451,12 +437,12 @@ export const CanvasTextNode = memo(function CanvasTextNode({
               y: Math.round(params.y),
               width: Math.round(params.width),
               height: Math.round(params.height),
+              sizingMode: 'custom',
             },
           ]);
         }}
       />
 
-      {/* 4 Alças de Conexão (permitem ligar textos soltos a cards, imagens ou outros textos) */}
       {!isEditing &&
         HANDLES.map((h) => (
           <React.Fragment key={h.id}>
@@ -479,20 +465,21 @@ export const CanvasTextNode = memo(function CanvasTextNode({
           </React.Fragment>
         ))}
 
-      {/* Superfície visual do Texto Livre */}
       <div
         onDoubleClick={(e) => {
           e.stopPropagation();
           setEditingTextNodeId(id);
         }}
         style={{
+          ...typoVars,
           backgroundColor: bgStyleColor,
           borderWidth,
           borderStyle: borderStyle === 'none' ? 'solid' : borderStyle,
           borderColor:
             borderStyle === 'none' ? 'transparent' : hexToRgba(borderColor, selected ? 0.9 : 0.55),
           color: node.textColor || defaultTextColor,
-          fontSize: `${node.fontSize ?? 15}px`,
+          fontSize: `${resolvedTypo.fontSize}px`,
+          lineHeight: resolvedTypo.lineHeight,
           textAlign: node.textAlign ?? 'left',
           minHeight: node.height && node.height > 0 ? node.height : undefined,
         }}
@@ -500,16 +487,38 @@ export const CanvasTextNode = memo(function CanvasTextNode({
           bgOpacity !== 'transparent' ? 'backdrop-blur-sm shadow-lg' : ''
         }`}
       >
+        {!isEditing && hasCallout && (calloutPos === 'top' || calloutPos === 'badge') && (
+          <CalloutBadge config={node.callout!} theme={theme} className="mb-2" />
+        )}
+
         {isEditing ? (
           <FreeTextInlineEditor
             node={node}
             onSave={(json, plainText) => updateCanvasNode(id, { textJson: json, plainText })}
+            onTypographyChange={(next) =>
+              updateCanvasNode(id, { typography: next, fontSize: next.fontSize })
+            }
+            onTypographyReset={() =>
+              updateCanvasNode(id, {
+                typography: undefined,
+                fontSize: DEFAULT_TEXT_TYPOGRAPHY.fontSize,
+              })
+            }
             onDone={() => setEditingTextNodeId(null)}
           />
         ) : hasContent ? (
-          <RichDocRenderer doc={node.textJson} className="kc-free-text-prose" />
+          <RichDocRenderer
+            doc={node.textJson}
+            className="kc-free-text-prose"
+            typography={node.typography}
+            legacyFontSize={node.fontSize}
+          />
         ) : (
           <p className="select-none italic opacity-45">Duplo clique para digitar...</p>
+        )}
+
+        {!isEditing && hasCallout && calloutPos !== 'top' && calloutPos !== 'badge' && (
+          <CalloutBadge config={node.callout!} theme={theme} className="mt-2" />
         )}
       </div>
     </div>

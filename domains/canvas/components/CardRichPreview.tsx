@@ -3,6 +3,12 @@
 import React, { useEffect, useId, useState } from 'react';
 import katex from 'katex';
 import { Link2 } from 'lucide-react';
+import { TextTypographyConfig } from '@/domains/knowledge/types';
+import {
+  DEFAULT_CARD_TYPOGRAPHY,
+  DEFAULT_TEXT_TYPOGRAPHY,
+  resolveTypography,
+} from '@/domains/knowledge/utils/defaults';
 import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryFactory';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
 import { ClozeText } from '@/domains/review/components/ClozeText';
@@ -20,11 +26,23 @@ interface TipTapNode {
   content?: TipTapNode[];
 }
 
-// Cache leve em memória para transição instantânea (0ms) ao sair da edição inline
 const previewCache = new Map<string, TipTapNode>();
 
 export function setCardPreviewCache(cardId: string, doc: Record<string, unknown>) {
   previewCache.set(cardId, doc as unknown as TipTapNode);
+}
+
+export function buildTypographyCssVars(
+  typography?: TextTypographyConfig,
+  defaults: Required<TextTypographyConfig> = DEFAULT_CARD_TYPOGRAPHY,
+  legacyFontSize?: number
+): React.CSSProperties {
+  const resolved = resolveTypography(typography, defaults, legacyFontSize);
+  return {
+    ['--kc-font-size' as string]: `${resolved.fontSize}px`,
+    ['--kc-line-height' as string]: String(resolved.lineHeight),
+    ['--kc-p-spacing' as string]: `${resolved.paragraphSpacing}px`,
+  };
 }
 
 function StudyTapeSpan({ children }: { children: React.ReactNode }) {
@@ -254,22 +272,37 @@ function renderTipTapNode(node: TipTapNode, key: string): React.ReactNode {
 export function RichDocRenderer({
   doc,
   className = '',
+  typography,
+  legacyFontSize,
 }: {
   doc?: Record<string, unknown> | null;
   className?: string;
+  typography?: TextTypographyConfig;
+  legacyFontSize?: number;
 }) {
   const parsed = doc as unknown as TipTapNode | null;
   if (!parsed?.content || parsed.content.length === 0) return null;
-  return <div className={`ProseMirror ${className}`}>{renderTipTapNode(parsed, 'free-text')}</div>;
+  const typoStyle = buildTypographyCssVars(typography, DEFAULT_TEXT_TYPOGRAPHY, legacyFontSize);
+  return (
+    <div style={typoStyle} className={`ProseMirror ${className}`}>
+      {renderTipTapNode(parsed, 'free-text')}
+    </div>
+  );
 }
 
 interface CardRichPreviewProps {
   cardId: string;
   updatedAt: number;
   fallbackExcerpt: string;
+  typography?: TextTypographyConfig;
 }
 
-export function CardRichPreview({ cardId, updatedAt, fallbackExcerpt }: CardRichPreviewProps) {
+export function CardRichPreview({
+  cardId,
+  updatedAt,
+  fallbackExcerpt,
+  typography,
+}: CardRichPreviewProps) {
   const [doc, setDoc] = useState<TipTapNode | null>(() => previewCache.get(cardId) ?? null);
 
   useEffect(() => {
@@ -294,15 +327,27 @@ export function CardRichPreview({ cardId, updatedAt, fallbackExcerpt }: CardRich
     };
   }, [cardId, updatedAt]);
 
+  const typoStyle = buildTypographyCssVars(typography, DEFAULT_CARD_TYPOGRAPHY);
   const hasDocContent = Boolean(doc?.content && doc.content.length > 0);
 
   if (!hasDocContent) {
     return (
-      <p className="text-[12.5px] leading-relaxed text-zinc-400">
+      <p
+        style={{
+          fontSize: 'var(--kc-font-size)',
+          lineHeight: 'var(--kc-line-height)',
+          ...typoStyle,
+        }}
+        className="text-zinc-400"
+      >
         <ClozeText text={fallbackExcerpt} />
       </p>
     );
   }
 
-  return <div className="ProseMirror kc-inline-prose">{renderTipTapNode(doc!, cardId)}</div>;
+  return (
+    <div style={typoStyle} className="ProseMirror kc-inline-prose">
+      {renderTipTapNode(doc!, cardId)}
+    </div>
+  );
 }

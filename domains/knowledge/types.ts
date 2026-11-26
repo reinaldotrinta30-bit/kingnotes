@@ -14,11 +14,112 @@ export interface SyncableEntity {
   version: number;
 }
 
+/** Escopo hierárquico compartilhado por Cards, elementos do Canvas e Traços */
+export interface HierarchyScope {
+  disciplineId?: string | null;
+  subjectId?: string | null;
+  subsubjectId?: string | null;
+  topicId?: string | null;
+}
+
+/** Formatação tipográfica por elemento */
+export interface TextTypographyConfig {
+  fontSize?: number;         // px (11 a 48)
+  lineHeight?: number;       // multiplicador (1.1 a 2.4)
+  paragraphSpacing?: number; // px (0 a 28)
+}
+
+/** Observação Rápida / Pegadinha da Banca personalizável */
+export type CalloutPreset =
+  | 'highlight'
+  | 'alert'
+  | 'tag'
+  | 'note'
+  | 'info'
+  | 'warning'
+  | 'custom';
+
+export type CalloutPosition = 'top' | 'bottom' | 'side' | 'inline' | 'badge' | 'alert-box';
+
+export type CalloutEmphasis = 'subtle' | 'medium' | 'strong';
+
+export interface CardCalloutConfig {
+  text?: string;
+  visible?: boolean;
+  preset?: CalloutPreset;
+  position?: CalloutPosition;
+  bgColor?: string;
+  textColor?: string;
+  borderColor?: string;
+  icon?: string;
+  emphasis?: CalloutEmphasis;
+  align?: 'left' | 'center' | 'right';
+}
+
+/** Tópicos, Subtópicos e Balões de Mapa Mental / Fluxograma */
+export type TopicShape =
+  | 'rect'
+  | 'rounded'
+  | 'square'
+  | 'circle'
+  | 'ellipse'
+  | 'diamond'
+  | 'capsule'
+  | 'hexagon';
+
+export interface TopicNodeConfig {
+  shape: TopicShape;
+  shadow?: 'none' | 'sm' | 'md' | 'glow';
+  icon?: string;
+  parentTopicId?: string | null;
+  defaultEdgeStyle?: {
+    edgeType?: 'smoothstep' | 'default' | 'straight';
+    color?: string;
+    lineStyle?: EdgeLineStyle;
+  };
+}
+
+/** Conexões flexíveis (automáticas + waypoints manuais) */
+export interface EdgeWaypoint {
+  x: number;
+  y: number;
+}
+
+export type EdgeLineStyle = 'solid' | 'dashed' | 'dotted';
+export type EdgeArrowType = 'none' | 'arrow' | 'arrowclosed' | 'dot';
+
+/** Configuração editorial do Modo Livro (separada das coordenadas X/Y do Canvas) */
+export type BookItemRole = 'chapter' | 'section' | 'content';
+
+export interface BookItemEntry {
+  id: string;
+  sourceType: 'topic' | 'card' | 'text' | 'image';
+  sourceId: string;
+  role: BookItemRole;
+  included: boolean;
+}
+
+export interface BookProjectConfig {
+  title?: string;
+  subtitle?: string;
+  headerText?: string;
+  footerText?: string;
+  showPageNumbers?: boolean;
+  margins?: 'narrow' | 'normal' | 'wide';
+  showPageBreaks?: boolean;
+  includeCallouts?: boolean;
+  includeImages?: boolean;
+  includeFreeTexts?: boolean;
+  outlineOrder?: BookItemEntry[];
+  updatedAt?: number;
+}
+
 export interface Workspace extends SyncableEntity {
   name: string;
   icon: string;
   color: string;
   description?: string;
+  bookConfig?: BookProjectConfig;
 }
 
 export interface StudyNotebook extends SyncableEntity {
@@ -66,7 +167,9 @@ export interface KnowledgeCardMeta extends SyncableEntity {
 
   title: string;
   excerpt: string; // Resumo curto (max ~240 chars) para renderização rápida no Canvas
-  notes: string;   // Observações pessoais / mnemônicos / jurisprudência
+  notes: string;   // Observações pessoais / mnemônicos / jurisprudência (sincronizado com callout.text)
+  callout?: CardCalloutConfig;
+  typography?: TextTypographyConfig;
   tags: string[];
   notebookIds?: string[];
   color: 'default' | 'amber' | 'emerald' | 'sky' | 'rose' | 'violet';
@@ -110,19 +213,23 @@ export interface FullKnowledgeCard {
   content: KnowledgeCardContent;
 }
 
-export interface CanvasNodePosition extends SyncableEntity {
+export interface CanvasNodePosition extends SyncableEntity, HierarchyScope {
   workspaceId: string;
   cardId?: string;          // Presente se for um Knowledge Card
   groupId?: string | null;  // Agrupamento pai no canvas
-  nodeType: 'knowledgeCard' | 'group' | 'image' | 'text';
-  label?: string;           // Título para grupos visuais
+  nodeType: 'knowledgeCard' | 'group' | 'image' | 'text' | 'topic';
+  label?: string;           // Título para grupos visuais ou tópicos
   color?: string;           // Cor principal / borda
-  bgColor?: string;         // Cor interna do grupo / bloco de texto
+  bgColor?: string;         // Cor interna do grupo / bloco de texto / tópico
   bgOpacity?: 'transparent' | 'subtle' | 'tinted' | 'solid';
+  sizingMode?: 'auto' | 'custom'; // Flexibilidade de dimensão para cards e balões
+  typography?: TextTypographyConfig;
+  callout?: CardCalloutConfig;
+  topicConfig?: TopicNodeConfig;
   textJson?: Record<string, unknown>; // Conteúdo rico TipTap para Texto Livre
   plainText?: string;                 // Texto plano para busca/promoção p/ Card
-  textColor?: string;                 // Cor base do texto livre
-  fontSize?: number;                  // Tamanho base da fonte (px)
+  textColor?: string;                 // Cor base do texto livre / tópico
+  fontSize?: number;                  // Legado mantido em sincronia com typography.fontSize
   textAlign?: 'left' | 'center' | 'right' | 'justify';
   padding?: 'none' | 'sm' | 'md' | 'lg';
   borderStyle?: 'solid' | 'dashed' | 'dotted' | 'none';
@@ -151,8 +258,15 @@ export interface CanvasConnection extends SyncableEntity {
   targetNodeId: string;
   sourceHandle?: string;
   targetHandle?: string;
-  edgeType?: 'smoothstep' | 'default';
+  edgeType?: 'smoothstep' | 'default' | 'straight';
+  routingMode?: 'auto' | 'manual';
+  waypoints?: EdgeWaypoint[];
+  strokeWidth?: number;
+  lineStyle?: EdgeLineStyle;
+  arrowStart?: EdgeArrowType;
+  arrowEnd?: EdgeArrowType;
   label?: string;
+  labelOffset?: { x: number; y: number };
   style: 'solid' | 'dashed' | 'animated';
   color?: string;
 }
@@ -181,7 +295,7 @@ export interface StrokePoint {
   pressure?: number;
 }
 
-export interface CanvasStroke extends SyncableEntity {
+export interface CanvasStroke extends SyncableEntity, HierarchyScope {
   workspaceId: string;
   tool: StrokeTool;
   color: string;

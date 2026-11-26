@@ -2,21 +2,35 @@ import { create } from 'zustand';
 import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryFactory';
 import { ensureSeedData } from '@/infrastructure/persistence/dexie/seedData';
 import {
+  BookProjectConfig,
   CanvasConnection,
   CanvasNodePosition,
+  CanvasStroke,
   FullKnowledgeCard,
   HierarchyNode,
   KnowledgeCardContent,
   KnowledgeCardMeta,
-  Workspace,
   StudyNotebook,
   StudySession,
-  CanvasStroke,
+  Workspace,
 } from '../types';
 import { buildSearchTokens } from '@/domains/search/utils/tokenizer';
 import { calculateSm2 } from '@/domains/review/utils/sm2';
+import {
+  getDescendantHierarchyIds,
+  matchesHierarchyContext,
+  resolveHierarchyChain,
+  resolveOptionalHierarchyScope,
+} from '../utils/hierarchyContext';
+
+import { unprojectNodePosition } from '@/domains/canvas/utils/panoramaLayout';
 
 export type ActiveViewMode = 'canvas' | 'book' | 'review';
+
+// Contadores monotônicos contra condições de corrida em leituras assíncronas do IndexedDB
+let workspaceRequestToken = 0;
+let activeCardRequestToken = 0;
+let secondaryCardRequestToken = 0;
 
 interface KnowledgeState {
   isReady: boolean;
@@ -54,7 +68,12 @@ interface KnowledgeState {
     selectedText: string;
   }) => Promise<{ cardId: string; title: string } | null>;
 
-  createCardOnCanvas: (params: { x: number; y: number; title?: string; template?: 'blank' | 'law' | 'jurisprudence' }) => Promise<string>;
+  createCardOnCanvas: (params: {
+    x: number;
+    y: number;
+    title?: string;
+    template?: 'blank' | 'law' | 'jurisprudence';
+  }) => Promise<string>;
   createCardFromPdf: (params: {
     title: string;
     bodyText: string;
@@ -63,7 +82,11 @@ interface KnowledgeState {
     color?: KnowledgeCardMeta['color'];
   }) => Promise<string | null>;
   updateCardMeta: (cardId: string, patch: Partial<KnowledgeCardMeta>) => Promise<void>;
-  saveCardContent: (cardId: string, content: KnowledgeCardContent, plainTextExcerpt: string) => Promise<void>;
+  saveCardContent: (
+    cardId: string,
+    content: KnowledgeCardContent,
+    plainTextExcerpt: string
+  ) => Promise<void>;
   deleteCard: (cardId: string) => Promise<void>;
   updateCardsMetaBulk: (cardIds: string[], patch: Partial<KnowledgeCardMeta>) => Promise<void>;
   deleteCanvasSelection: (nodeIds: string[], edgeIds: string[]) => Promise<void>;
@@ -77,16 +100,32 @@ interface KnowledgeState {
   createNotebook: (name: string, color?: string) => Promise<StudyNotebook>;
   deleteNotebook: (notebookId: string) => Promise<void>;
   toggleCardInNotebook: (cardId: string, notebookId: string) => Promise<void>;
-  recordCardReview: (cardId: string, confidence: 'hard' | 'good' | 'easy', durationMs?: number) => Promise<void>;
+  recordCardReview: (
+    cardId: string,
+    confidence: 'hard' | 'good' | 'easy',
+    durationMs?: number
+  ) => Promise<void>;
   saveStudySession: (durationSeconds: number, mode: StudySession['mode']) => Promise<void>;
-  addCanvasStroke: (stroke: Omit<CanvasStroke, 'id' | 'workspaceId' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'syncStatus' | 'version'>) => Promise<CanvasStroke | null>;
+  addCanvasStroke: (
+    stroke: Omit<
+      CanvasStroke,
+      'id' | 'workspaceId' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'syncStatus' | 'version'
+    >
+  ) => Promise<CanvasStroke | null>;
   deleteCanvasStroke: (strokeId: string) => Promise<void>;
   restoreCanvasStroke: (stroke: CanvasStroke) => Promise<void>;
   clearCanvasStrokes: () => Promise<void>;
-  createWorkspace: (name: string) => Promise<unknown>;
-  deleteHierarchyItem: (id: string) => Promise<unknown>;
-  createCanvasGroup: (x: number, y: number, label?: string, width?: number, height?: number) => Promise<unknown>;
-  renameCanvasGroup: (groupId: string, label: string) => Promise<unknown>;
+  createWorkspace: (name: string, icon?: string) => Promise<void>;
+  updateWorkspaceBookConfig: (patch: Partial<BookProjectConfig>) => Promise<void>;
+  deleteHierarchyItem: (id: string) => Promise<void>;
+  createCanvasGroup: (
+    x: number,
+    y: number,
+    label?: string,
+    width?: number,
+    height?: number
+  ) => Promise<string>;
+  renameCanvasGroup: (groupId: string, label: string) => Promise<void>;
   createCanvasImage: (params: {
     x: number;
     y: number;
@@ -107,16 +146,33 @@ interface KnowledgeState {
   updateCanvasEdge: (edgeId: string, patch: Partial<CanvasConnection>) => Promise<void>;
   deleteCanvasEdge: (edgeId: string) => Promise<void>;
   renameHierarchyItem: (id: string, title: string) => Promise<void>;
-  restoreCardBundle: (full: FullKnowledgeCard, nodes: CanvasNodePosition[], edges: CanvasConnection[]) => Promise<void>;
-  persistNodePositions: (updates: Array<{ id: string; x: number; y: number; width?: number; height?: number }>) => Promise<void>;
+  restoreCardBundle: (
+    full: FullKnowledgeCard,
+    nodes: CanvasNodePosition[],
+    edges: CanvasConnection[]
+  ) => Promise<void>;
+  persistNodePositions: (
+    updates: Array<{ id: string; x: number; y: number; width?: number; height?: number }>
+  ) => Promise<void>;
   addCanvasEdge: (
     sourceNodeId: string,
     targetNodeId: string,
     label?: string,
-    options?: { sourceHandle?: string; targetHandle?: string; edgeType?: 'smoothstep' | 'default'; style?: 'solid' | 'dashed' | 'animated'; color?: string }
+    options?: {
+      sourceHandle?: string;
+      targetHandle?: string;
+      edgeType?: 'smoothstep' | 'default' | 'straight';
+      style?: 'solid' | 'dashed' | 'animated';
+      color?: string;
+    }
   ) => Promise<void>;
   updateCanvasEdgesBulk: (edges: CanvasConnection[]) => Promise<void>;
-  createHierarchyItem: (node: Omit<HierarchyNode, 'id' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'syncStatus' | 'version'>) => Promise<void>;
+  createHierarchyItem: (
+    node: Omit<
+      HierarchyNode,
+      'id' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'syncStatus' | 'version'
+    >
+  ) => Promise<void>;
 }
 
 export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
@@ -155,6 +211,20 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   setSearchOpen: (isSearchOpen) => set({ isSearchOpen }),
 
   selectWorkspace: async (workspaceId) => {
+    const token = ++workspaceRequestToken;
+    activeCardRequestToken += 1;
+    secondaryCardRequestToken += 1;
+
+    // Limpa contexto anterior imediatamente para evitar exibição de dados obsoletos durante a leitura
+    set({
+      activeWorkspaceId: workspaceId,
+      selectedHierarchyId: null,
+      activeCardId: null,
+      activeFullCard: null,
+      secondaryCardId: null,
+      secondaryFullCard: null,
+    });
+
     const repo = getKnowledgeRepository();
     const [hierarchy, cards, canvasNodes, canvasEdges, canvasStrokes] = await Promise.all([
       repo.listHierarchy(workspaceId),
@@ -164,11 +234,15 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       repo.listCanvasStrokes(workspaceId),
     ]);
 
+    // Descarta resposta se o usuário já trocou para outro workspace nesse meio tempo
+    if (token !== workspaceRequestToken) return;
+
     const cardsById: Record<string, KnowledgeCardMeta> = {};
     for (const c of cards) cardsById[c.id] = c;
 
     set({
       activeWorkspaceId: workspaceId,
+      selectedHierarchyId: null,
       hierarchy,
       cardsById,
       canvasNodes,
@@ -181,10 +255,43 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     });
   },
 
-  selectHierarchy: (selectedHierarchyId) => set({ selectedHierarchyId }),
+  selectHierarchy: (selectedHierarchyId) => {
+    const state = get();
+    // Se algum card aberto no editor não pertence ao novo contexto, fecha para evitar salvar no contexto errado
+    const keepActive =
+      !selectedHierarchyId ||
+      !state.activeCardId ||
+      matchesHierarchyContext(
+        state.cardsById[state.activeCardId],
+        selectedHierarchyId,
+        state.hierarchy
+      );
+
+    const keepSecondary =
+      !selectedHierarchyId ||
+      !state.secondaryCardId ||
+      matchesHierarchyContext(
+        state.cardsById[state.secondaryCardId],
+        selectedHierarchyId,
+        state.hierarchy
+      );
+
+    if (!keepActive) activeCardRequestToken += 1;
+    if (!keepSecondary) secondaryCardRequestToken += 1;
+
+    set({
+      selectedHierarchyId,
+      activeCardId: keepActive ? state.activeCardId : null,
+      activeFullCard: keepActive ? state.activeFullCard : null,
+      secondaryCardId: keepSecondary ? state.secondaryCardId : null,
+      secondaryFullCard: keepSecondary ? state.secondaryFullCard : null,
+    });
+  },
 
   openCard: async (cardId) => {
+    const token = ++activeCardRequestToken;
     if (!cardId) {
+      secondaryCardRequestToken += 1;
       set({
         activeCardId: null,
         activeFullCard: null,
@@ -193,25 +300,37 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       });
       return;
     }
+
+    const expectedWorkspaceId = get().activeWorkspaceId;
     const repo = getKnowledgeRepository();
     const full = await repo.getFullCard(cardId);
+
+    if (token !== activeCardRequestToken) return;
+    if (full && expectedWorkspaceId && full.meta.workspaceId !== expectedWorkspaceId) return;
+
     set((s) => ({
       activeCardId: cardId,
       activeFullCard: full,
-      // Se o card aberto já estava na segunda coluna, limpa a duplicata
       secondaryCardId: s.secondaryCardId === cardId ? null : s.secondaryCardId,
       secondaryFullCard: s.secondaryCardId === cardId ? null : s.secondaryFullCard,
     }));
   },
 
   openSecondaryCard: async (cardId) => {
+    const token = ++secondaryCardRequestToken;
     if (!cardId) {
       set({ secondaryCardId: null, secondaryFullCard: null });
       return;
     }
     if (get().activeCardId === cardId) return;
+
+    const expectedWorkspaceId = get().activeWorkspaceId;
     const repo = getKnowledgeRepository();
     const full = await repo.getFullCard(cardId);
+
+    if (token !== secondaryCardRequestToken) return;
+    if (full && expectedWorkspaceId && full.meta.workspaceId !== expectedWorkspaceId) return;
+
     set({ secondaryCardId: cardId, secondaryFullCard: full });
   },
 
@@ -287,6 +406,10 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       workspaceId,
       cardId: newCardId,
       nodeType: 'knowledgeCard',
+      disciplineId: meta.disciplineId,
+      subjectId: meta.subjectId,
+      subsubjectId: meta.subsubjectId,
+      topicId: meta.topicId,
       x: posX,
       y: posY,
       width: 350,
@@ -340,25 +463,58 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const cardId = `card-${crypto.randomUUID()}`;
     const nodeId = `node-${crypto.randomUUID()}`;
 
-    const defaultDiscipline = state.hierarchy.find((h) => h.level === 'discipline')?.id ?? 'unassigned';
-    const defaultSubject = state.hierarchy.find((h) => h.level === 'subject')?.id ?? 'unassigned';
+    const chain = resolveHierarchyChain(state.hierarchy, state.selectedHierarchyId);
 
     const templateDocs: Record<string, Record<string, unknown>> = {
       blank: { type: 'doc', content: [{ type: 'paragraph' }] },
       law: {
         type: 'doc',
         content: [
-          { type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: 'Dispositivo Legal (Lei Seca)' }] },
-          { type: 'blockquote', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Cole aqui o artigo literal...' }] }] },
-          { type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: 'Pegadinhas de Banca' }] },
-          { type: 'taskList', content: [{ type: 'taskItem', attrs: { checked: false }, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Exceções à regra geral' }] }] }] },
+          {
+            type: 'heading',
+            attrs: { level: 3 },
+            content: [{ type: 'text', text: 'Dispositivo Legal (Lei Seca)' }],
+          },
+          {
+            type: 'blockquote',
+            content: [
+              {
+                type: 'paragraph',
+                content: [{ type: 'text', text: 'Cole aqui o artigo literal...' }],
+              },
+            ],
+          },
+          {
+            type: 'heading',
+            attrs: { level: 3 },
+            content: [{ type: 'text', text: 'Pegadinhas de Banca' }],
+          },
+          {
+            type: 'taskList',
+            content: [
+              {
+                type: 'taskItem',
+                attrs: { checked: false },
+                content: [
+                  { type: 'paragraph', content: [{ type: 'text', text: 'Exceções à regra geral' }] },
+                ],
+              },
+            ],
+          },
         ],
       },
       jurisprudence: {
         type: 'doc',
         content: [
-          { type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text: 'Tese Fixada (STF / STJ)' }] },
-          { type: 'paragraph', content: [{ type: 'text', text: 'Informativo / Súmula nº ...' }] },
+          {
+            type: 'heading',
+            attrs: { level: 3 },
+            content: [{ type: 'text', text: 'Tese Fixada (STF / STJ)' }],
+          },
+          {
+            type: 'paragraph',
+            content: [{ type: 'text', text: 'Informativo / Súmula nº ...' }],
+          },
         ],
       },
     };
@@ -366,10 +522,15 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const meta: KnowledgeCardMeta = {
       id: cardId,
       workspaceId,
-      disciplineId: defaultDiscipline,
-      subjectId: defaultSubject,
+      disciplineId: chain.disciplineId,
+      subjectId: chain.subjectId,
+      subsubjectId: chain.subsubjectId,
+      topicId: chain.topicId,
       title,
-      excerpt: template === 'law' ? 'Estrutura de Lei Seca e Pegadinhas de Banca.' : 'Clique para editar seu conhecimento...',
+      excerpt:
+        template === 'law'
+          ? 'Estrutura de Lei Seca e Pegadinhas de Banca.'
+          : 'Clique para editar seu conhecimento...',
       notes: '',
       tags: template !== 'blank' ? [template] : [],
       color: template === 'law' ? 'amber' : template === 'jurisprudence' ? 'emerald' : 'default',
@@ -402,10 +563,14 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       workspaceId,
       cardId,
       nodeType: 'knowledgeCard',
+      disciplineId: chain.disciplineId,
+      subjectId: chain.subjectId,
+      subsubjectId: chain.subsubjectId,
+      topicId: chain.topicId,
       x,
       y,
-      width: 320,
-      height: 200,
+      width: 350,
+      height: 240,
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
@@ -440,12 +605,14 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const cardId = `card-${crypto.randomUUID()}`;
     const nodeId = `node-${crypto.randomUUID()}`;
 
-    const defaultDiscipline =
-      state.hierarchy.find((h) => h.level === 'discipline')?.id ?? 'unassigned';
-    const defaultSubject = state.hierarchy.find((h) => h.level === 'subject')?.id ?? 'unassigned';
+    const chain = resolveHierarchyChain(state.hierarchy, state.selectedHierarchyId);
 
-    // Calcula posição livre ao lado dos cards existentes para não empilhar em cima
-    const cardNodes = state.canvasNodes.filter((n) => n.nodeType === 'knowledgeCard');
+    const cardNodes = state.canvasNodes.filter(
+      (n) =>
+        n.nodeType === 'knowledgeCard' &&
+        n.cardId &&
+        matchesHierarchyContext(state.cardsById[n.cardId], state.selectedHierarchyId, state.hierarchy)
+    );
     const lastNode = cardNodes[cardNodes.length - 1];
     const posX = lastNode ? Math.round(lastNode.x + 60) : 180;
     const posY = lastNode ? Math.round(lastNode.y + 60) : 160;
@@ -464,8 +631,10 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const meta: KnowledgeCardMeta = {
       id: cardId,
       workspaceId,
-      disciplineId: defaultDiscipline,
-      subjectId: defaultSubject,
+      disciplineId: chain.disciplineId,
+      subjectId: chain.subjectId,
+      subsubjectId: chain.subsubjectId,
+      topicId: chain.topicId,
       title: cleanTitle,
       excerpt: cleanBody ? cleanBody.slice(0, 220) : sourceNote,
       notes: sourceNote,
@@ -500,6 +669,10 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       workspaceId,
       cardId,
       nodeType: 'knowledgeCard',
+      disciplineId: chain.disciplineId,
+      subjectId: chain.subjectId,
+      subsubjectId: chain.subsubjectId,
+      topicId: chain.topicId,
       x: posX,
       y: posY,
       width: 350,
@@ -527,9 +700,17 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const current = get().cardsById[cardId];
     if (!current) return;
 
+    // Mantém notes e callout.text sempre sincronizados
+    const mergedPatch: Partial<KnowledgeCardMeta> = { ...patch };
+    if (patch.callout && patch.callout.text !== undefined && patch.notes === undefined) {
+      mergedPatch.notes = patch.callout.text;
+    } else if (patch.notes !== undefined && current.callout && patch.callout === undefined) {
+      mergedPatch.callout = { ...current.callout, text: patch.notes };
+    }
+
     const updated: KnowledgeCardMeta = {
       ...current,
-      ...patch,
+      ...mergedPatch,
       updatedAt: Date.now(),
       version: current.version + 1,
       syncStatus: 'pending_push',
@@ -543,12 +724,14 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
 
     set((s) => ({
       cardsById: { ...s.cardsById, [cardId]: updated },
-      activeFullCard: s.activeFullCard?.meta.id === cardId
-        ? { ...s.activeFullCard, meta: updated }
-        : s.activeFullCard,
-      secondaryFullCard: s.secondaryFullCard?.meta.id === cardId
-        ? { ...s.secondaryFullCard, meta: updated }
-        : s.secondaryFullCard,
+      activeFullCard:
+        s.activeFullCard?.meta.id === cardId
+          ? { ...s.activeFullCard, meta: updated }
+          : s.activeFullCard,
+      secondaryFullCard:
+        s.secondaryFullCard?.meta.id === cardId
+          ? { ...s.secondaryFullCard, meta: updated }
+          : s.secondaryFullCard,
     }));
 
     await repo.saveCard(updated);
@@ -574,12 +757,14 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
 
     set((s) => ({
       cardsById: { ...s.cardsById, [cardId]: updatedMeta },
-      activeFullCard: s.activeFullCard?.meta.id === cardId
-        ? { meta: updatedMeta, content }
-        : s.activeFullCard,
-      secondaryFullCard: s.secondaryFullCard?.meta.id === cardId
-        ? { meta: updatedMeta, content }
-        : s.secondaryFullCard,
+      activeFullCard:
+        s.activeFullCard?.meta.id === cardId
+          ? { meta: updatedMeta, content }
+          : s.activeFullCard,
+      secondaryFullCard:
+        s.secondaryFullCard?.meta.id === cardId
+          ? { meta: updatedMeta, content }
+          : s.secondaryFullCard,
     }));
 
     await repo.saveCard(updatedMeta, content);
@@ -661,7 +846,6 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       }
     }
 
-    // Inclui arestas ligadas aos nós removidos
     const allEdgesToDelete = new Set<string>(edgeIdSet);
     for (const e of state.canvasEdges) {
       if (nodeIdSet.has(e.sourceNodeId) || nodeIdSet.has(e.targetNodeId)) {
@@ -684,7 +868,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     await Promise.all([
       ...Array.from(cardIdsToRemove).map((cid) => repo.softDeleteCard(cid)),
       ...nodesToRemove
-        .filter((n) => n.nodeType === 'group' || n.nodeType === 'image' || n.nodeType === 'text')
+        .filter((n) => n.nodeType !== 'knowledgeCard')
         .map((n) => repo.deleteCanvasNode(n.id)),
       ...Array.from(allEdgesToDelete).map((eid) => repo.deleteCanvasConnection(eid)),
     ]);
@@ -790,8 +974,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     if (parsed.length === 0) return;
 
     const now = Date.now();
-    const defaultDiscipline = state.hierarchy.find((h) => h.level === 'discipline')?.id ?? 'unassigned';
-    const defaultSubject = state.hierarchy.find((h) => h.level === 'subject')?.id ?? 'unassigned';
+    const chain = resolveHierarchyChain(state.hierarchy, state.selectedHierarchyId);
 
     const nextCardsById = { ...state.cardsById };
     const newCanvasNodes: CanvasNodePosition[] = [];
@@ -803,11 +986,13 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       const item = parsed[i];
       if (!item.title) continue;
 
-      // Reaproveita card existente pelo título para nunca perder conteúdo rico, PDFs ou flashcards
       const existingNode = state.canvasNodes.find((cn) => {
         if (cn.nodeType !== 'knowledgeCard' || !cn.cardId || usedNodeIds.has(cn.id)) return false;
         const c = nextCardsById[cn.cardId];
-        return c && c.title.trim().toLowerCase() === item.title.toLowerCase();
+        if (!c || !matchesHierarchyContext(c, state.selectedHierarchyId, state.hierarchy)) {
+          return false;
+        }
+        return c.title.trim().toLowerCase() === item.title.toLowerCase();
       });
 
       let nodeId: string;
@@ -826,8 +1011,10 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
         const meta: KnowledgeCardMeta = {
           id: cardId,
           workspaceId,
-          disciplineId: defaultDiscipline,
-          subjectId: defaultSubject,
+          disciplineId: chain.disciplineId,
+          subjectId: chain.subjectId,
+          subsubjectId: chain.subsubjectId,
+          topicId: chain.topicId,
           title: item.title,
           excerpt: bodyText ? bodyText.slice(0, 220) : 'Criado via Modo Estrutura em Texto.',
           notes: '',
@@ -848,12 +1035,13 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
           version: 1,
         };
 
-        const paragraphs = item.bodyLines.length > 0
-          ? item.bodyLines.map((line) => ({
-              type: 'paragraph',
-              content: [{ type: 'text', text: line }],
-            }))
-          : [{ type: 'paragraph' }];
+        const paragraphs =
+          item.bodyLines.length > 0
+            ? item.bodyLines.map((line) => ({
+                type: 'paragraph',
+                content: [{ type: 'text', text: line }],
+              }))
+            : [{ type: 'paragraph' }];
 
         const content: KnowledgeCardContent = {
           cardId,
@@ -869,10 +1057,14 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
           workspaceId,
           cardId,
           nodeType: 'knowledgeCard',
+          disciplineId: chain.disciplineId,
+          subjectId: chain.subjectId,
+          subsubjectId: chain.subsubjectId,
+          topicId: chain.topicId,
           x: 120 + item.level * 420,
           y: 120 + i * 220,
-          width: 320,
-          height: 190,
+          width: 350,
+          height: 210,
           createdAt: now,
           updatedAt: now,
           deletedAt: null,
@@ -885,14 +1077,15 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
         newCanvasNodes.push(canvasNode);
       }
 
-      // Conecta ao nó pai mais próximo de nível inferior
       while (stack.length > 0 && stack[stack.length - 1].level >= item.level) {
         stack.pop();
       }
       if (stack.length > 0) {
         const parentNodeId = stack[stack.length - 1].nodeId;
         const alreadyLinked =
-          state.canvasEdges.some((e) => e.sourceNodeId === parentNodeId && e.targetNodeId === nodeId) ||
+          state.canvasEdges.some(
+            (e) => e.sourceNodeId === parentNodeId && e.targetNodeId === nodeId
+          ) ||
           newEdges.some((e) => e.sourceNodeId === parentNodeId && e.targetNodeId === nodeId);
 
         if (!alreadyLinked) {
@@ -1105,11 +1298,14 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   },
 
   addCanvasStroke: async (partial) => {
-    const workspaceId = get().activeWorkspaceId;
+    const state = get();
+    const workspaceId = state.activeWorkspaceId;
     if (!workspaceId) return null;
     const repo = getKnowledgeRepository();
+    const scope = resolveOptionalHierarchyScope(state.hierarchy, state.selectedHierarchyId);
     const now = Date.now();
     const stroke: CanvasStroke = {
+      ...scope,
       ...partial,
       id: `stk-${crypto.randomUUID()}`,
       workspaceId,
@@ -1140,11 +1336,24 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   },
 
   clearCanvasStrokes: async () => {
-    const workspaceId = get().activeWorkspaceId;
+    const state = get();
+    const workspaceId = state.activeWorkspaceId;
     if (!workspaceId) return;
     const repo = getKnowledgeRepository();
-    set({ canvasStrokes: [] });
-    await repo.clearWorkspaceStrokes(workspaceId);
+
+    if (!state.selectedHierarchyId) {
+      set({ canvasStrokes: [] });
+      await repo.clearWorkspaceStrokes(workspaceId);
+      return;
+    }
+
+    // Limpa apenas os traços pertencentes ao contexto hierárquico ativo
+    const toRemove = state.canvasStrokes.filter((st) =>
+      matchesHierarchyContext(st, state.selectedHierarchyId, state.hierarchy)
+    );
+    const removeIds = new Set(toRemove.map((st) => st.id));
+    set((s) => ({ canvasStrokes: s.canvasStrokes.filter((st) => !removeIds.has(st.id)) }));
+    await Promise.all(toRemove.map((st) => repo.deleteCanvasStroke(st.id)));
   },
 
   restoreCanvasSnapshot: async (nodes, edges, strokes) => {
@@ -1198,7 +1407,8 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const nextNodes = get().canvasNodes.map((n) => {
       const upd = map.get(n.id);
       if (!upd) return n;
-      const updated = { ...n, ...upd, updatedAt: now };
+      const realPos = unprojectNodePosition(upd.id, upd.x, upd.y);
+      const updated = { ...n, ...upd, x: realPos.x, y: realPos.y, updatedAt: now };
       modified.push(updated);
       return updated;
     });
@@ -1241,41 +1451,65 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     await Promise.all(edges.map((e) => repo.saveCanvasConnection(e)));
   },
 
-  // Adicionar à interface KnowledgeState e ao objeto create(...) em useKnowledgeStore.ts:
+  createWorkspace: async (name: string, icon = '📚') => {
+    const repo = getKnowledgeRepository();
+    const now = Date.now();
+    const ws: Workspace = {
+      id: `ws-${crypto.randomUUID()}`,
+      name,
+      icon,
+      color: '#6366f1',
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+      syncStatus: 'local_only',
+      version: 1,
+    };
+    await repo.saveWorkspace(ws);
+    set((s) => ({ workspaces: [...s.workspaces, ws] }));
+    await get().selectWorkspace(ws.id);
+  },
 
-createWorkspace: async (name: string, icon = '📚') => {
-  const repo = getKnowledgeRepository();
-  const now = Date.now();
-  const ws: Workspace = {
-    id: `ws-${crypto.randomUUID()}`,
-    name,
-    icon,
-    color: '#6366f1',
-    createdAt: now,
-    updatedAt: now,
-    deletedAt: null,
-    syncStatus: 'local_only',
-    version: 1,
-  };
-  await repo.saveWorkspace(ws);
-  set((s) => ({ workspaces: [...s.workspaces, ws] }));
-  await get().selectWorkspace(ws.id);
-},
+  updateWorkspaceBookConfig: async (patch) => {
+    const state = get();
+    const ws = state.workspaces.find((w) => w.id === state.activeWorkspaceId);
+    if (!ws) return;
+    const repo = getKnowledgeRepository();
+    const now = Date.now();
+    const updated: Workspace = {
+      ...ws,
+      bookConfig: {
+        ...ws.bookConfig,
+        ...patch,
+        updatedAt: now,
+      },
+      updatedAt: now,
+      version: ws.version + 1,
+      syncStatus: 'pending_push',
+    };
+    set((s) => ({
+      workspaces: s.workspaces.map((w) => (w.id === ws.id ? updated : w)),
+    }));
+    await repo.saveWorkspace(updated);
+  },
 
-createCanvasGroup: async (
+  createCanvasGroup: async (
     x: number,
     y: number,
     label = 'Novo Agrupamento',
     width = 640,
     height = 360
   ) => {
+    const state = get();
     const repo = getKnowledgeRepository();
-    const workspaceId = get().activeWorkspaceId!;
+    const workspaceId = state.activeWorkspaceId!;
+    const scope = resolveOptionalHierarchyScope(state.hierarchy, state.selectedHierarchyId);
     const now = Date.now();
     const group: CanvasNodePosition = {
       id: `grp-${crypto.randomUUID()}`,
       workspaceId,
       nodeType: 'group',
+      ...scope,
       label,
       color: '#6366f1',
       bgColor: '#6366f1',
@@ -1297,15 +1531,18 @@ createCanvasGroup: async (
     return group.id;
   },
 
-createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
-    const workspaceId = get().activeWorkspaceId;
+  createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
+    const state = get();
+    const workspaceId = state.activeWorkspaceId;
     if (!workspaceId) return null;
     const repo = getKnowledgeRepository();
+    const scope = resolveOptionalHierarchyScope(state.hierarchy, state.selectedHierarchyId);
     const now = Date.now();
     const imgNode: CanvasNodePosition = {
       id: `img-${crypto.randomUUID()}`,
       workspaceId,
       nodeType: 'image',
+      ...scope,
       blobId,
       caption,
       borderStyle: 'solid',
@@ -1345,9 +1582,11 @@ createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
   },
 
   createCanvasText: async ({ x, y, preset = 'plain', initialText = '' }) => {
-    const workspaceId = get().activeWorkspaceId;
+    const state = get();
+    const workspaceId = state.activeWorkspaceId;
     if (!workspaceId) return null;
     const repo = getKnowledgeRepository();
+    const scope = resolveOptionalHierarchyScope(state.hierarchy, state.selectedHierarchyId);
     const now = Date.now();
 
     const presetStyles: Record<
@@ -1364,6 +1603,7 @@ createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
         borderRadius: 'xl',
         color: '#6366f1',
         fontSize: 15,
+        typography: { fontSize: 15, lineHeight: 1.48, paragraphSpacing: 6 },
         textAlign: 'left',
         padding: 'sm',
       },
@@ -1377,6 +1617,7 @@ createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
         borderRadius: 'xl',
         color: '#6366f1',
         fontSize: 26,
+        typography: { fontSize: 26, lineHeight: 1.25, paragraphSpacing: 4 },
         textAlign: 'left',
         padding: 'sm',
       },
@@ -1390,6 +1631,7 @@ createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
         borderRadius: 'xl',
         color: '#f59e0b',
         fontSize: 14,
+        typography: { fontSize: 14, lineHeight: 1.48, paragraphSpacing: 6 },
         textAlign: 'left',
         padding: 'md',
       },
@@ -1403,6 +1645,7 @@ createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
         borderRadius: 'xl',
         color: '#6366f1',
         fontSize: 14,
+        typography: { fontSize: 14, lineHeight: 1.5, paragraphSpacing: 6 },
         textAlign: 'left',
         padding: 'md',
       },
@@ -1435,6 +1678,7 @@ createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
       id: `txt-${crypto.randomUUID()}`,
       workspaceId,
       nodeType: 'text',
+      ...scope,
       ...style,
       textJson,
       plainText: initialText,
@@ -1505,9 +1749,12 @@ createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
       }
     };
 
-    const defaultDiscipline =
-      state.hierarchy.find((h) => h.level === 'discipline')?.id ?? 'unassigned';
-    const defaultSubject = state.hierarchy.find((h) => h.level === 'subject')?.id ?? 'unassigned';
+    // Preserva o escopo salvo no próprio texto livre ou usa o contexto ativo
+    const fallbackChain = resolveHierarchyChain(state.hierarchy, state.selectedHierarchyId);
+    const disciplineId = textNode.disciplineId || fallbackChain.disciplineId;
+    const subjectId = textNode.subjectId || fallbackChain.subjectId;
+    const subsubjectId = textNode.subsubjectId ?? fallbackChain.subsubjectId;
+    const topicId = textNode.topicId ?? fallbackChain.topicId;
 
     const cardId = `card-${crypto.randomUUID()}`;
     const cardNodeId = `node-${crypto.randomUUID()}`;
@@ -1515,11 +1762,15 @@ createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
     const meta: KnowledgeCardMeta = {
       id: cardId,
       workspaceId,
-      disciplineId: defaultDiscipline,
-      subjectId: defaultSubject,
+      disciplineId,
+      subjectId,
+      subsubjectId,
+      topicId,
       title,
       excerpt: rawPlain ? rawPlain.slice(0, 220) : 'Clique para editar seu conhecimento...',
-      notes: '',
+      notes: textNode.callout?.text ?? '',
+      callout: textNode.callout,
+      typography: textNode.typography ?? (textNode.fontSize ? { fontSize: textNode.fontSize } : undefined),
       tags: [],
       color:
         textNode.bgOpacity && textNode.bgOpacity !== 'transparent'
@@ -1532,7 +1783,7 @@ createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
       lastReviewedAt: null,
       nextReviewAt: null,
       outgoingLinkIds: [],
-      searchTokens: buildSearchTokens([title, rawPlain]),
+      searchTokens: buildSearchTokens([title, rawPlain, textNode.callout?.text ?? '']),
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
@@ -1557,10 +1808,14 @@ createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
       workspaceId,
       cardId,
       nodeType: 'knowledgeCard',
+      disciplineId,
+      subjectId,
+      subsubjectId,
+      topicId,
       x: textNode.x,
       y: textNode.y,
-      width: Math.max(340, textNode.width || 350),
-      height: Math.max(220, textNode.height || 240),
+      width: Math.max(320, textNode.width || 350),
+      height: Math.max(200, textNode.height || 240),
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
@@ -1568,7 +1823,6 @@ createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
       version: 1,
     };
 
-    // Transfere todas as setas ligadas ao texto livre para o novo Knowledge Card
     const updatedEdges = state.canvasEdges.map((edge) => {
       if (edge.sourceNodeId !== nodeId && edge.targetNodeId !== nodeId) return edge;
       return {
@@ -1581,9 +1835,7 @@ createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
       };
     });
 
-    const changedEdges = updatedEdges.filter(
-      (e, i) => e !== state.canvasEdges[i]
-    );
+    const changedEdges = updatedEdges.filter((e, i) => e !== state.canvasEdges[i]);
 
     await Promise.all([
       repo.saveCard(meta, content),
@@ -1602,24 +1854,31 @@ createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
   },
 
   renameCanvasGroup: async (groupId: string, label: string) => {
-  const repo = getKnowledgeRepository();
-  const target = get().canvasNodes.find((n) => n.id === groupId);
-  if (!target) return;
-  const updated = { ...target, label, updatedAt: Date.now() };
-  set((s) => ({
-    canvasNodes: s.canvasNodes.map((n) => (n.id === groupId ? updated : n)),
-  }));
-  await repo.upsertCanvasNodes([updated]);
-},
+    const repo = getKnowledgeRepository();
+    const target = get().canvasNodes.find((n) => n.id === groupId);
+    if (!target) return;
+    const updated = { ...target, label, updatedAt: Date.now() };
+    set((s) => ({
+      canvasNodes: s.canvasNodes.map((n) => (n.id === groupId ? updated : n)),
+    }));
+    await repo.upsertCanvasNodes([updated]);
+  },
 
-deleteHierarchyItem: async (id: string) => {
-  const repo = getKnowledgeRepository();
-  await repo.deleteHierarchyNode(id);
-  set((s) => ({
-    hierarchy: s.hierarchy.filter((h) => h.id !== id && h.parentId !== id),
-    selectedHierarchyId: s.selectedHierarchyId === id ? null : s.selectedHierarchyId,
-  }));
-},
+  deleteHierarchyItem: async (id: string) => {
+    const state = get();
+    const repo = getKnowledgeRepository();
+    const toDeleteIds = getDescendantHierarchyIds(state.hierarchy, id);
+
+    await Promise.all(Array.from(toDeleteIds).map((hid) => repo.deleteHierarchyNode(hid)));
+
+    set((s) => ({
+      hierarchy: s.hierarchy.filter((h) => !toDeleteIds.has(h.id)),
+      selectedHierarchyId:
+        s.selectedHierarchyId && toDeleteIds.has(s.selectedHierarchyId)
+          ? null
+          : s.selectedHierarchyId,
+    }));
+  },
 
   createHierarchyItem: async (partial) => {
     const repo = getKnowledgeRepository();

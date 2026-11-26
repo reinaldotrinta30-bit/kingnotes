@@ -19,6 +19,8 @@ import {
 import { CanvasStroke, StrokePoint, StrokeTool } from '@/domains/knowledge/types';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
 import { useUiStore } from '@/domains/ui/store/useUiStore';
+import { matchesHierarchyContext } from '@/domains/knowledge/utils/hierarchyContext';
+import { getStrokeProjectionOffset } from '../utils/panoramaLayout';
 
 type ActiveDrawTool = StrokeTool | 'eraser';
 
@@ -196,8 +198,22 @@ export function DrawingLayer({
   canRedo,
   onClose,
 }: DrawingLayerProps) {
-  const { canvasStrokes, addCanvasStroke, deleteCanvasStroke, clearCanvasStrokes } =
-    useKnowledgeStore();
+  const {
+    canvasStrokes,
+    hierarchy,
+    selectedHierarchyId,
+    addCanvasStroke,
+    deleteCanvasStroke,
+    clearCanvasStrokes,
+  } = useKnowledgeStore();
+
+  const visibleStrokes = React.useMemo(
+    () =>
+      canvasStrokes.filter((st) =>
+        matchesHierarchyContext(st, selectedHierarchyId, hierarchy)
+      ),
+    [canvasStrokes, selectedHierarchyId, hierarchy]
+  );
   const { theme, openConfirm, addToast } = useUiStore();
 
   const [tool, setTool] = useState<ActiveDrawTool>('pen');
@@ -244,7 +260,10 @@ export function DrawingLayer({
   const eraseAtPoint = useCallback(
     (pt: StrokePoint) => {
       const tolerance = 14 / Math.max(0.25, viewport.zoom);
-      const hits = canvasStrokes.filter((stroke) => hitTestStroke(stroke, pt, tolerance));
+      const hits = visibleStrokes.filter((stroke) => {
+        const offset = getStrokeProjectionOffset(stroke.id);
+        return hitTestStroke(stroke, { x: pt.x - offset.dx, y: pt.y - offset.dy }, tolerance);
+      });
       if (hits.length === 0) return;
 
       // Salva 1 único snapshot por passada da borracha para Ctrl+Z restaurar tudo de uma vez
@@ -257,7 +276,7 @@ export function DrawingLayer({
         deleteCanvasStroke(stroke.id);
       }
     },
-    [canvasStrokes, viewport.zoom, deleteCanvasStroke, onBeforeMutate]
+    [visibleStrokes, viewport.zoom, deleteCanvasStroke, onBeforeMutate]
   );
 
   const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -349,10 +368,10 @@ export function DrawingLayer({
   };
 
   const handleClearAll = () => {
-    if (canvasStrokes.length === 0) return;
+    if (visibleStrokes.length === 0) return;
     openConfirm({
       title: 'Limpar todos os desenhos?',
-      description: `Todos os ${canvasStrokes.length} traços desta área de trabalho serão apagados. Você poderá desfazer com Ctrl+Z.`,
+      description: `Todos os ${visibleStrokes.length} traços desta área de trabalho serão apagados. Você poderá desfazer com Ctrl+Z.`,
       confirmLabel: 'Limpar desenhos',
       variant: 'danger',
       onConfirm: async () => {
@@ -382,7 +401,17 @@ export function DrawingLayer({
         }`}
       >
         <g transform={`translate(${viewport.x}, ${viewport.y}) scale(${viewport.zoom})`}>
-          {canvasStrokes.map((stroke) => renderStrokeElement(stroke, stroke.id))}
+          {visibleStrokes.map((stroke) => {
+            const offset = getStrokeProjectionOffset(stroke.id);
+            if (offset.dx === 0 && offset.dy === 0) {
+              return renderStrokeElement(stroke, stroke.id);
+            }
+            return (
+              <g key={stroke.id} transform={`translate(${offset.dx}, ${offset.dy})`}>
+                {renderStrokeElement(stroke, `${stroke.id}-el`)}
+              </g>
+            );
+          })}
           {draftStroke && renderStrokeElement(draftStroke, 'active-draft')}
         </g>
       </svg>
@@ -500,7 +529,7 @@ export function DrawingLayer({
           <button
             type="button"
             onClick={handleClearAll}
-            disabled={canvasStrokes.length === 0}
+            disabled={visibleStrokes.length === 0}
             className="rounded-lg p-1.5 text-zinc-400 hover:bg-rose-500/15 hover:text-rose-400 disabled:opacity-30"
             title="Limpar camada de desenho"
           >

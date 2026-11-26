@@ -75,6 +75,9 @@ interface UiState {
   setCroppingImageNodeId: (nodeId: string | null) => void;
   editingTextNodeId: string | null;
   setEditingTextNodeId: (nodeId: string | null) => void;
+  hasUnsavedEditorChanges: boolean;
+  setHasUnsavedEditorChanges: (dirty: boolean) => void;
+  clearTransientCanvasUi: () => void;
 
   hydrateUi: () => void;
   toggleTheme: () => void;
@@ -132,6 +135,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   isCanvasZoomedOut: false,
   croppingImageNodeId: null,
   editingTextNodeId: null,
+  hasUnsavedEditorChanges: false,
 
   hydrateUi: () => {
     if (typeof window === 'undefined') return;
@@ -216,6 +220,14 @@ export const useUiStore = create<UiState>((set, get) => ({
     set((s) => (s.isCanvasZoomedOut === isCanvasZoomedOut ? s : { isCanvasZoomedOut })),
   setCroppingImageNodeId: (croppingImageNodeId) => set({ croppingImageNodeId }),
   setEditingTextNodeId: (editingTextNodeId) => set({ editingTextNodeId }),
+  setHasUnsavedEditorChanges: (hasUnsavedEditorChanges) => set({ hasUnsavedEditorChanges }),
+  clearTransientCanvasUi: () =>
+    set({
+      inlineEditingCardId: null,
+      editingTextNodeId: null,
+      croppingImageNodeId: null,
+      hasUnsavedEditorChanges: false,
+    }),
 
   triggerCardHighlight: (cardId) => {
     if (highlightTimer) clearTimeout(highlightTimer);

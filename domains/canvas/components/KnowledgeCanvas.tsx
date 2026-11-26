@@ -74,17 +74,27 @@ import { KnowledgeCardNode } from './KnowledgeCardNode';
 import { GroupNode } from './GroupNode';
 import { CanvasImageNode } from './CanvasImageNode';
 import { CanvasTextNode } from './CanvasTextNode';
+import { PanoramaSectionNode } from './PanoramaSectionNode';
+import {
+  computePanoramaLayout,
+  syncActiveProjectionOffsets,
+} from '../utils/panoramaLayout';
 import { EditableEdge } from './EditableEdge';
 import { OutlineEditorView } from './OutlineEditorView';
 import { DrawingLayer } from './DrawingLayer';
 import { computeMultiAxisLayout, LayoutDirection } from '../utils/autoLayout';
 import { prepareCanvasImage } from '../utils/imageBlob';
+import {
+  getHierarchyBreadcrumb,
+  matchesHierarchyContext,
+} from '@/domains/knowledge/utils/hierarchyContext';
 
 const nodeTypes = {
   knowledgeCard: KnowledgeCardNode,
   canvasGroup: GroupNode,
   canvasImage: CanvasImageNode,
   canvasText: CanvasTextNode,
+  panoramaSection: PanoramaSectionNode,
 };
 
 const edgeTypes = {
@@ -123,7 +133,7 @@ const SPOTLIGHT_OPTIONS: Array<{ id: CanvasSpotlightMode; label: string }> = [
 const QUICK_STICKERS = ['💡', '⚠️', '📌', '🧠', '✅', '⚖️', '🎯'];
 
 function CanvasInner() {
-  const { screenToFlowPosition, fitView, getNodes, getEdges, zoomIn, zoomOut, getViewport, setViewport } =
+  const { screenToFlowPosition, getNodes, getEdges, zoomIn, zoomOut, getViewport, setViewport } =
     useReactFlow();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -154,7 +164,10 @@ function CanvasInner() {
     cardsById,
     canvasNodes,
     canvasEdges,
+    canvasStrokes,
+    hierarchy,
     selectedHierarchyId,
+    selectHierarchy,
     activeCardId,
     openCard,
     createCardOnCanvas,
@@ -296,6 +309,79 @@ function CanvasInner() {
     viewportHistory.current.push(getViewport());
   }, [getViewport]);
 
+  // Enquadramento inteligente com margens seguras (evita cards encostando nas abas e no Dock inferior)
+  const fitCanvasWithMargins = useCallback(
+    (options?: { nodeIds?: string[]; duration?: number; maxZoom?: number }) => {
+      const container = containerRef.current;
+      const allNodes = getNodes().filter((n) => !n.hidden);
+      const targets = options?.nodeIds
+        ? allNodes.filter((n) => options.nodeIds!.includes(n.id))
+        : allNodes;
+
+      const duration = options?.duration ?? 450;
+
+      if (!container || targets.length === 0) {
+        const neutral: Viewport = { x: 0, y: 0, zoom: 1 };
+        setViewport(neutral, { duration });
+        setLiveViewport(neutral);
+        return;
+      }
+
+      const rect = container.getBoundingClientRect();
+      const marginTop = 76;
+      const marginBottom = zenMode ? 64 : 108;
+      const marginLeft = 72;
+      const marginRight = 72;
+
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      for (const n of targets) {
+        const w =
+          n.measured?.width ??
+          (typeof n.style?.width === 'number' ? n.style.width : 350);
+        const h =
+          n.measured?.height ??
+          (typeof n.style?.height === 'number' && n.style.height > 0 ? n.style.height : 220);
+
+        minX = Math.min(minX, n.position.x);
+        minY = Math.min(minY, n.position.y);
+        maxX = Math.max(maxX, n.position.x + w);
+        maxY = Math.max(maxY, n.position.y + h);
+      }
+
+      if (!Number.isFinite(minX)) return;
+
+      const availW = Math.max(160, rect.width - marginLeft - marginRight);
+      const availH = Math.max(140, rect.height - marginTop - marginBottom);
+      const contentW = Math.max(1, maxX - minX);
+      const contentH = Math.max(1, maxY - minY);
+
+      const maxAllowedZoom = options?.maxZoom ?? 1.05;
+      const zoom = Math.max(
+        0.15,
+        Math.min(maxAllowedZoom, availW / contentW, availH / contentH)
+      );
+
+      const safeCenterX = marginLeft + availW / 2;
+      const safeCenterY = marginTop + availH / 2;
+      const contentCenterX = (minX + maxX) / 2;
+      const contentCenterY = (minY + maxY) / 2;
+
+      const nextVp: Viewport = {
+        x: Math.round((safeCenterX - contentCenterX * zoom) * 10) / 10,
+        y: Math.round((safeCenterY - contentCenterY * zoom) * 10) / 10,
+        zoom: Math.round(zoom * 1000) / 1000,
+      };
+
+      setViewport(nextVp, { duration });
+      setLiveViewport(nextVp);
+    },
+    [getNodes, setViewport, zenMode]
+  );
+
   // Insere uma imagem solta no Canvas (por botão, arrastar ou Ctrl+V)
   const insertImageFileToCanvas = useCallback(
     async (file: File, clientPos?: { x: number; y: number }) => {
@@ -330,20 +416,68 @@ function CanvasInner() {
     [addToast, pushHistorySnapshot, screenToFlowPosition, getSmartViewportPos, createCanvasImage]
   );
 
-  // Sincroniza Zustand -> React Flow
+  // Calcula projeção em Panorama Sequencial quando a visão reúne múltiplos assuntos/tópicos
+  const panorama = useMemo(() => {
+    const visibleNodes = canvasNodes.filter((cn) => {
+      if (cn.nodeType === 'knowledgeCard') {
+        if (!cn.cardId || !cardsById[cn.cardId]) return false;
+        return matchesHierarchyContext(cardsById[cn.cardId], selectedHierarchyId, hierarchy);
+      }
+      return matchesHierarchyContext(cn, selectedHierarchyId, hierarchy);
+    });
+
+    const visibleStrokes = canvasStrokes.filter((st) =>
+      matchesHierarchyContext(st, selectedHierarchyId, hierarchy)
+    );
+
+    return computePanoramaLayout({
+      visibleNodes,
+      visibleStrokes,
+      cardsById,
+      hierarchy,
+      selectedHierarchyId,
+    });
+  }, [canvasNodes, canvasStrokes, cardsById, hierarchy, selectedHierarchyId]);
+
+  useEffect(() => {
+    syncActiveProjectionOffsets(panorama.nodeOffsets, panorama.strokeOffsets);
+  }, [panorama]);
+
+  // Sincroniza Zustand -> React Flow respeitando o contexto hierárquico e o Panorama Sequencial
   useEffect(() => {
     setNodes((prevNodes) => {
       const prevMap = new Map(prevNodes.map((n) => [n.id, n]));
       const next: Node[] = [];
 
+      // Molduras de mapa (atrás de todos os itens) quando o Modo Panorama está ativo
+      if (panorama.isPanorama) {
+        for (const section of panorama.sections) {
+          next.push({
+            id: section.id,
+            type: 'panoramaSection',
+            position: { x: section.x, y: section.y },
+            zIndex: -20,
+            draggable: false,
+            selectable: false,
+            connectable: false,
+            focusable: false,
+            style: { width: section.width, height: section.height },
+            data: { section },
+          });
+        }
+      }
+
       for (const cn of canvasNodes) {
         const prev = prevMap.get(cn.id);
+        const offset = panorama.nodeOffsets.get(cn.id) ?? { dx: 0, dy: 0 };
+        const displayPos = { x: cn.x + offset.dx, y: cn.y + offset.dy };
 
         if (cn.nodeType === 'group') {
+          if (!matchesHierarchyContext(cn, selectedHierarchyId, hierarchy)) continue;
           next.push({
             id: cn.id,
             type: 'canvasGroup',
-            position: { x: cn.x, y: cn.y },
+            position: displayPos,
             zIndex: -1,
             selected: prev?.selected ?? false,
             style: { width: cn.width || 640, height: cn.height || 360 },
@@ -353,11 +487,12 @@ function CanvasInner() {
         }
 
         if (cn.nodeType === 'text') {
+          if (!matchesHierarchyContext(cn, selectedHierarchyId, hierarchy)) continue;
           const isEditingThis = editingTextNodeId === cn.id;
           next.push({
             id: cn.id,
             type: 'canvasText',
-            position: { x: cn.x, y: cn.y },
+            position: displayPos,
             zIndex: isEditingThis ? 100 : 10,
             selected: prev?.selected ?? false,
             hidden: prev?.hidden ?? false,
@@ -368,10 +503,11 @@ function CanvasInner() {
         }
 
         if (cn.nodeType === 'image') {
+          if (!matchesHierarchyContext(cn, selectedHierarchyId, hierarchy)) continue;
           next.push({
             id: cn.id,
             type: 'canvasImage',
-            position: { x: cn.x, y: cn.y },
+            position: displayPos,
             selected: prev?.selected ?? false,
             hidden: prev?.hidden ?? false,
             style: { width: cn.width || 280, height: cn.height || 220 },
@@ -384,13 +520,7 @@ function CanvasInner() {
         const card = cardsById[cn.cardId];
         if (!card) continue;
 
-        if (
-          selectedHierarchyId &&
-          card.disciplineId !== selectedHierarchyId &&
-          card.subjectId !== selectedHierarchyId &&
-          card.subsubjectId !== selectedHierarchyId &&
-          card.topicId !== selectedHierarchyId
-        ) {
+        if (!matchesHierarchyContext(card, selectedHierarchyId, hierarchy)) {
           continue;
         }
 
@@ -398,7 +528,7 @@ function CanvasInner() {
         next.push({
           id: cn.id,
           type: 'knowledgeCard',
-          position: { x: cn.x, y: cn.y },
+          position: displayPos,
           zIndex: isEditingThis ? 100 : undefined,
           selected: prev?.selected ?? false,
           hidden: prev?.hidden ?? false,
@@ -419,7 +549,9 @@ function CanvasInner() {
   }, [
     canvasNodes,
     cardsById,
+    hierarchy,
     selectedHierarchyId,
+    panorama,
     inlineEditingCardId,
     editingTextNodeId,
     openCard,
@@ -428,32 +560,75 @@ function CanvasInner() {
   ]);
 
   useEffect(() => {
+    const visibleNodeIds = new Set<string>();
+    for (const cn of canvasNodes) {
+      if (cn.nodeType === 'knowledgeCard') {
+        if (
+          cn.cardId &&
+          cardsById[cn.cardId] &&
+          matchesHierarchyContext(cardsById[cn.cardId], selectedHierarchyId, hierarchy)
+        ) {
+          visibleNodeIds.add(cn.id);
+        }
+      } else if (matchesHierarchyContext(cn, selectedHierarchyId, hierarchy)) {
+        visibleNodeIds.add(cn.id);
+      }
+    }
+
     setEdges((prevEdges) => {
       const prevMap = new Map(prevEdges.map((e) => [e.id, e]));
-      return canvasEdges.map((e) => ({
-        id: e.id,
-        source: e.sourceNodeId,
-        target: e.targetNodeId,
-        sourceHandle: e.sourceHandle,
-        targetHandle: e.targetHandle,
-        type: 'editable',
-        data: {
-          pathStyle: e.edgeType ?? 'smoothstep',
-          edgeStyle: e.style,
-          color: e.color ?? '#6366f1',
-        },
-        label: e.label,
-        animated: e.style === 'animated',
-        selected: prevMap.get(e.id)?.selected ?? false,
-        hidden: prevMap.get(e.id)?.hidden ?? false,
-        style: {
-          stroke: e.color ?? '#6366f1',
-          strokeWidth: 1.75,
-          strokeDasharray: e.style === 'dashed' ? '5 5' : undefined,
-        },
-      }));
+      return canvasEdges
+        .filter((e) => visibleNodeIds.has(e.sourceNodeId) && visibleNodeIds.has(e.targetNodeId))
+        .map((e) => ({
+          id: e.id,
+          source: e.sourceNodeId,
+          target: e.targetNodeId,
+          sourceHandle: e.sourceHandle,
+          targetHandle: e.targetHandle,
+          type: 'editable',
+          data: {
+            pathStyle: e.edgeType ?? 'smoothstep',
+            edgeStyle: e.style,
+            color: e.color ?? '#6366f1',
+          },
+          label: e.label,
+          animated: e.style === 'animated',
+          selected: prevMap.get(e.id)?.selected ?? false,
+          hidden: prevMap.get(e.id)?.hidden ?? false,
+          style: {
+            stroke: e.color ?? '#6366f1',
+            strokeWidth: e.strokeWidth ?? 1.75,
+            strokeDasharray: e.style === 'dashed' ? '5 5' : undefined,
+          },
+        }));
     });
-  }, [canvasEdges, setEdges]);
+  }, [canvasEdges, canvasNodes, cardsById, hierarchy, selectedHierarchyId, setEdges]);
+
+  // Limpa histórico/seleções e reenquadra a câmera com margens seguras ao trocar de contexto
+  const prevContextKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    historyRef.current = { past: [], future: [] };
+    setCanUndo(false);
+    setCanRedo(false);
+    setIsPlacingText(false);
+    setNodes((nds) => (nds.some((n) => n.selected) ? nds.map((n) => ({ ...n, selected: false })) : nds));
+    setEdges((eds) => (eds.some((e) => e.selected) ? eds.map((e) => ({ ...e, selected: false })) : eds));
+
+    const contextKey = `${activeWorkspaceId ?? ''}::${selectedHierarchyId ?? 'ALL'}`;
+    if (prevContextKeyRef.current !== null && prevContextKeyRef.current !== contextKey) {
+      const timer = setTimeout(() => {
+        fitCanvasWithMargins({ duration: 420, maxZoom: 1.05 });
+      }, 90);
+      prevContextKeyRef.current = contextKey;
+      return () => clearTimeout(timer);
+    }
+    prevContextKeyRef.current = contextKey;
+  }, [activeWorkspaceId, selectedHierarchyId, setNodes, setEdges, fitCanvasWithMargins]);
+
+  const activeBreadcrumb = useMemo(
+    () => getHierarchyBreadcrumb(hierarchy, selectedHierarchyId),
+    [hierarchy, selectedHierarchyId]
+  );
 
   // Restaura última câmera do Workspace
   const restoredWorkspaceRef = useRef<string | null>(null);
@@ -475,8 +650,8 @@ function CanvasInner() {
         // fallback para fitView
       }
     }
-    setTimeout(() => fitView({ padding: 0.25, duration: 350 }), 60);
-  }, [activeWorkspaceId, nodes.length, setViewport, fitView]);
+    setTimeout(() => fitCanvasWithMargins({ duration: 350, maxZoom: 1.05 }), 90);
+  }, [activeWorkspaceId, nodes.length, setViewport, fitCanvasWithMargins]);
 
   // "Voar até o Card"
   useEffect(() => {
@@ -484,17 +659,16 @@ function CanvasInner() {
     const targetCanvasNode = canvasNodes.find((n) => n.cardId === focusRequest.cardId);
     if (targetCanvasNode) {
       setTimeout(() => {
-        fitView({
-          nodes: [{ id: targetCanvasNode.id }],
-          duration: 650,
-          maxZoom: 1.1,
-          padding: 0.45,
+        fitCanvasWithMargins({
+          nodeIds: [targetCanvasNode.id],
+          duration: 550,
+          maxZoom: 1.12,
         });
         triggerCardHighlight(focusRequest.cardId);
       }, 60);
     }
     clearFocusRequest();
-  }, [focusRequest, canvasNodes, fitView, triggerCardHighlight, clearFocusRequest]);
+  }, [focusRequest, canvasNodes, fitCanvasWithMargins, triggerCardHighlight, clearFocusRequest]);
 
   useEffect(() => {
     if (!openHeaderMenu) return;
@@ -939,6 +1113,13 @@ function CanvasInner() {
   );
 
   const handleApplyLayout = async (direction: LayoutDirection) => {
+    if (panorama.isPanorama) {
+      setOpenHeaderMenu(null);
+      addToast({
+        message: 'Os mapas já estão organizados por assunto. Abra um mapa específico para auto-organizar os cards internos.',
+      });
+      return;
+    }
     pushHistorySnapshot();
     const { nodes: laidNodes, edges: laidEdges } = computeMultiAxisLayout(
       getNodes().filter((n) => n.type !== 'canvasGroup'),
@@ -966,7 +1147,7 @@ function CanvasInner() {
         : ce;
     });
     await updateCanvasEdgesBulk(updatedStoreEdges);
-    setTimeout(() => fitView({ padding: 0.2, duration: 500 }), 50);
+    setTimeout(() => fitCanvasWithMargins({ duration: 450, maxZoom: 1.05 }), 80);
   };
 
   const handleUpdateAllEdges = async (patch: {
@@ -1119,7 +1300,7 @@ function CanvasInner() {
 
       <div className="flex items-center gap-0.5 rounded-xl border border-zinc-800/80 bg-[#0F1115] p-0.5">
         <button type="button" onClick={() => zoomOut()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Afastar"><ZoomOut className="h-3.5 w-3.5" /></button>
-        <button type="button" onClick={() => fitView({ padding: 0.2, duration: 500 })} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Enquadrar Tudo"><Maximize className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => fitCanvasWithMargins({ duration: 450, maxZoom: 1.05 })} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Enquadrar Tudo com margens"><Maximize className="h-3.5 w-3.5" /></button>
         <button type="button" onClick={() => zoomIn()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Aproximar"><ZoomIn className="h-3.5 w-3.5" /></button>
         <button
           type="button"
@@ -1339,7 +1520,7 @@ function CanvasInner() {
             const selected = getNodes().filter((n) => n.selected && n.type !== 'canvasGroup');
             if (selected.length > 0) {
               saveViewport();
-              fitView({ nodes: selected, duration: 600, padding: 0.15 });
+              fitCanvasWithMargins({ nodeIds: selected.map((n) => n.id), duration: 500, maxZoom: 1.15 });
             }
           }, 100);
         }
@@ -1456,7 +1637,11 @@ function CanvasInner() {
           bgColor={theme === 'paper' ? '#FFFFFF' : '#161920'}
           nodeBorderRadius={6}
           nodeColor={(n) =>
-            n.type === 'canvasGroup'
+            n.type === 'panoramaSection'
+              ? theme === 'paper'
+                ? 'rgba(120, 113, 108, 0.14)'
+                : 'rgba(99, 102, 241, 0.09)'
+              : n.type === 'canvasGroup'
               ? 'rgba(99, 102, 241, 0.14)'
               : n.type === 'canvasImage'
               ? 'rgba(16, 185, 129, 0.55)'
@@ -1913,6 +2098,38 @@ function CanvasInner() {
                 title="Excluir imagem"
               >
                 <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </Panel>
+        )}
+
+        {/* IDENTIFICAÇÃO CLARA DO CONTEXTO HIERÁRQUICO ATIVO */}
+        {activeBreadcrumb.length > 0 && !zenMode && (
+          <Panel position="top-left" className="ml-3 mt-3">
+            <div className="flex items-center gap-1.5 rounded-xl border border-indigo-500/35 bg-[#161920]/90 px-3 py-1.5 text-[11px] text-zinc-200 shadow-lg backdrop-blur-xl">
+              {activeBreadcrumb.map((item, idx) => (
+                <React.Fragment key={item.id}>
+                  {idx > 0 && <span className="text-zinc-500">/</span>}
+                  <button
+                    type="button"
+                    onClick={() => selectHierarchy(item.id)}
+                    className={`transition hover:text-indigo-300 ${
+                      idx === activeBreadcrumb.length - 1
+                        ? 'font-semibold text-indigo-300'
+                        : 'text-zinc-400'
+                    }`}
+                  >
+                    {item.title}
+                  </button>
+                </React.Fragment>
+              ))}
+              <button
+                type="button"
+                onClick={() => selectHierarchy(null)}
+                className="ml-1.5 rounded-md bg-zinc-800/80 px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:bg-zinc-700 hover:text-zinc-100"
+                title="Voltar para Todo o Conhecimento"
+              >
+                Ver tudo
               </button>
             </div>
           </Panel>

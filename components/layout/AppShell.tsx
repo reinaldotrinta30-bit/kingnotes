@@ -61,6 +61,9 @@ export function AppShell() {
     toggleZenMode,
     setZenMode,
     addToast,
+    openConfirm,
+    hasUnsavedEditorChanges,
+    clearTransientCanvasUi,
   } = useUiStore();
 
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
@@ -154,7 +157,26 @@ export function AppShell() {
             <div className="flex items-center gap-1.5">
               <select
                 value={activeWorkspaceId ?? ''}
-                onChange={(e) => selectWorkspace(e.target.value)}
+                onChange={(e) => {
+                  const nextWorkspaceId = e.target.value;
+                  if (nextWorkspaceId === activeWorkspaceId) return;
+                  const runSwitch = () => {
+                    clearTransientCanvasUi();
+                    selectWorkspace(nextWorkspaceId);
+                  };
+                  if (hasUnsavedEditorChanges) {
+                    openConfirm({
+                      title: 'Descartar alterações não salvas?',
+                      description:
+                        'Há edições pendentes no card atual. Deseja trocar de área de trabalho e descartá-las?',
+                      confirmLabel: 'Trocar área',
+                      variant: 'danger',
+                      onConfirm: runSwitch,
+                    });
+                    return;
+                  }
+                  runSwitch();
+                }}
                 className="w-full rounded-xl border border-zinc-800 bg-[#181C24] px-3 py-2 text-xs font-medium text-zinc-200 focus:border-indigo-500 focus:outline-none"
               >
                 {workspaces.map((ws) => (

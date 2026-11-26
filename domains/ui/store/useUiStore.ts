@@ -8,6 +8,7 @@ export type BookWidth = 'narrow' | 'medium' | 'wide';
 export type BookFont = 'serif' | 'sans';
 export type BookFontSize = 'sm' | 'base' | 'lg';
 export type EditorPresentationMode = 'expanded' | 'side';
+export type PdfReaderSide = 'left' | 'right';
 
 export interface UserPreferences {
   cardDensity: CardDensity;
@@ -16,6 +17,8 @@ export interface UserPreferences {
   bookFont: BookFont;
   bookFontSize: BookFontSize;
   customFontFamily: string | null;
+  pdfSide: PdfReaderSide;
+  pdfWidthPct: number;
 }
 
 const DEFAULT_PREFERENCES: UserPreferences = {
@@ -25,6 +28,8 @@ const DEFAULT_PREFERENCES: UserPreferences = {
   bookFont: 'serif',
   bookFontSize: 'base',
   customFontFamily: null,
+  pdfSide: 'left',
+  pdfWidthPct: 42,
 };
 
 const PREFS_STORAGE_KEY = 'kc_preferences_v1';

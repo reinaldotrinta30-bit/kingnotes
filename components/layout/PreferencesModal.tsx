@@ -10,6 +10,9 @@ import {
   Type,
   Upload,
   Trash2,
+  FileText,
+  PanelLeft,
+  PanelRight,
 } from 'lucide-react';
 import {
   BookFont,
@@ -17,6 +20,7 @@ import {
   BookWidth,
   CanvasBackgroundStyle,
   CardDensity,
+  PdfReaderSide,
   useUiStore,
 } from '@/domains/ui/store/useUiStore';
 import {
@@ -159,6 +163,43 @@ export function PreferencesModal() {
                     className={pillClass(preferences.canvasBackground === opt.id)}
                   >
                     {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="h-px bg-zinc-800/80" />
+
+          {/* SEÇÃO 1.5: LEITOR DE PDF (TELA DIVIDIDA) */}
+          <div className="space-y-3">
+            <h4 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+              <FileText className="h-3.5 w-3.5 text-rose-400" /> Leitor de PDF (Tela Dividida)
+            </h4>
+
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-zinc-300">
+                Posição do Leitor de PDF na Tela
+              </label>
+              <div className="flex gap-2">
+                {(
+                  [
+                    { id: 'left', label: 'Lado Esquerdo', icon: PanelLeft },
+                    { id: 'right', label: 'Lado Direito', icon: PanelRight },
+                  ] as Array<{
+                    id: PdfReaderSide;
+                    label: string;
+                    icon: React.ComponentType<{ className?: string }>;
+                  }>
+                ).map(({ id, label, icon: Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => updatePreferences({ pdfSide: id })}
+                    className={`${pillClass(preferences.pdfSide === id)} flex items-center justify-center gap-1.5`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {label}
                   </button>
                 ))}
               </div>

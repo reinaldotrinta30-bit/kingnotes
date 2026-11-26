@@ -81,6 +81,7 @@ import {
   EdgeLineStyle,
   EdgeArrowType,
   EdgeLabelStyle,
+  EdgeWaypoint,
 } from '@/domains/knowledge/types';
 import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryFactory';
 import { KnowledgeCardNode } from './KnowledgeCardNode';
@@ -281,11 +282,16 @@ function CanvasInner() {
   const connectingNodeId = useRef<string | null>(null);
   const connectingHandleId = useRef<string | null>(null);
 
-  const groupDragRef = useRef<{
-    groupId: string;
-    startX: number;
-    startY: number;
-    children: Array<{ id: string; startX: number; startY: number }>;
+  // Motor unificado de movimentação múltipla (Ctrl, Shift, Caixa de Seleção e Grupos)
+  const multiDragRef = useRef<{
+    anchorNodeId: string;
+    anchorStartX: number;
+    anchorStartY: number;
+    rfMovingIds: Set<string>;
+    movingNodeIds: Set<string>;
+    extraGroupChildren: Array<{ id: string; startX: number; startY: number }>;
+    internalEdgesWithWaypoints: Array<{ id: string; origWaypoints: EdgeWaypoint[] }>;
+    frontierAutoEdgeIds: Set<string>;
   } | null>(null);
 
   // Calcula o centro exato da visão atual do usuário, evitando empilhar sobre outro card
@@ -1275,11 +1281,27 @@ function CanvasInner() {
   ]);
 
 
-  const onNodeDragStart = useCallback(
-    (_: unknown, node: Node) => {
+  // Inicia arrasto rígido de 1 ou vários itens (classificando conexões internas vs. de fronteira)
+  const startMultiDrag = useCallback(
+    (anchorNode: Node | undefined, draggedNodes?: Node[]) => {
+      if (!anchorNode) return;
       pushHistorySnapshot();
 
-      if (node.type === 'canvasGroup') {
+      const allFlowNodes = getNodes();
+      const baseDragged =
+        draggedNodes && draggedNodes.length > 0
+          ? draggedNodes
+          : anchorNode.selected
+          ? allFlowNodes.filter((n) => n.selected && n.type !== 'panoramaSection')
+          : [anchorNode];
+
+      const rfMovingIds = new Set(baseDragged.map((n) => n.id));
+      const extraGroupChildren: Array<{ id: string; startX: number; startY: number }> = [];
+      const extraAddedIds = new Set<string>();
+
+      // Se algum Grupo estiver sendo movido, inclui automaticamente seus itens internos ainda não selecionados
+      for (const node of baseDragged) {
+        if (node.type !== 'canvasGroup') continue;
         const gW = Number(node.measured?.width || node.style?.width || 640);
         const gH = Number(node.measured?.height || node.style?.height || 360);
         const gx1 = node.position.x;
@@ -1287,41 +1309,98 @@ function CanvasInner() {
         const gx2 = gx1 + gW;
         const gy2 = gy1 + gH;
 
-        const children = getNodes()
-          .filter(
-            (n) =>
-              (n.type === 'knowledgeCard' || n.type === 'canvasImage' || n.type === 'canvasText' || n.type === 'canvasTopic') &&
-              !n.hidden
-          )
-          .filter((n) => {
-            const nw = Number(n.measured?.width || n.style?.width || 350);
-            const nh = Number(n.measured?.height || n.style?.height || 240);
-            const cx = n.position.x + nw / 2;
-            const cy = n.position.y + nh / 2;
-            return cx >= gx1 && cx <= gx2 && cy >= gy1 && cy <= gy2;
-          })
-          .map((n) => ({ id: n.id, startX: n.position.x, startY: n.position.y }));
-
-        groupDragRef.current = {
-          groupId: node.id,
-          startX: node.position.x,
-          startY: node.position.y,
-          children,
-        };
-      } else {
-        groupDragRef.current = null;
+        for (const candidate of allFlowNodes) {
+          if (
+            candidate.hidden ||
+            rfMovingIds.has(candidate.id) ||
+            extraAddedIds.has(candidate.id)
+          ) {
+            continue;
+          }
+          if (
+            candidate.type !== 'knowledgeCard' &&
+            candidate.type !== 'canvasImage' &&
+            candidate.type !== 'canvasText' &&
+            candidate.type !== 'canvasTopic'
+          ) {
+            continue;
+          }
+          const nw = Number(candidate.measured?.width || candidate.style?.width || 350);
+          const nh = Number(candidate.measured?.height || candidate.style?.height || 240);
+          const cx = candidate.position.x + nw / 2;
+          const cy = candidate.position.y + nh / 2;
+          if (cx >= gx1 && cx <= gx2 && cy >= gy1 && cy <= gy2) {
+            extraAddedIds.add(candidate.id);
+            extraGroupChildren.push({
+              id: candidate.id,
+              startX: candidate.position.x,
+              startY: candidate.position.y,
+            });
+          }
+        }
       }
+
+      const movingNodeIds = new Set<string>([...rfMovingIds, ...extraAddedIds]);
+
+      // Classifica cada conexão:
+      // 1) Interna (ambas pontas se movem juntas) -> translada waypoints rigidamente, sem alterar lados/rótulos
+      // 2) Fronteira (1 ponta move, 1 fica fixa) -> se automática, recalcula o melhor lado estrategicamente
+      // 3) Externa (nenhuma ponta move) -> intocada
+      const storeEdges = useKnowledgeStore.getState().canvasEdges;
+      const internalEdgesWithWaypoints: Array<{ id: string; origWaypoints: EdgeWaypoint[] }> = [];
+      const frontierAutoEdgeIds = new Set<string>();
+
+      for (const ce of storeEdges) {
+        const srcMoves = movingNodeIds.has(ce.sourceNodeId);
+        const tgtMoves = movingNodeIds.has(ce.targetNodeId);
+
+        if (srcMoves && tgtMoves) {
+          if (ce.waypoints && ce.waypoints.length > 0) {
+            internalEdgesWithWaypoints.push({
+              id: ce.id,
+              origWaypoints: ce.waypoints.map((w) => ({ ...w })),
+            });
+          }
+        } else if (srcMoves !== tgtMoves) {
+          if (ce.routingMode !== 'manual') {
+            frontierAutoEdgeIds.add(ce.id);
+          }
+        }
+      }
+
+      multiDragRef.current = {
+        anchorNodeId: anchorNode.id,
+        anchorStartX: anchorNode.position.x,
+        anchorStartY: anchorNode.position.y,
+        rfMovingIds,
+        movingNodeIds,
+        extraGroupChildren,
+        internalEdgesWithWaypoints,
+        frontierAutoEdgeIds,
+      };
     },
     [getNodes, pushHistorySnapshot]
   );
 
-  const onNodeDrag = useCallback(
-    (_: unknown, draggedNode: Node) => {
-      if (groupDragRef.current && groupDragRef.current.groupId === draggedNode.id) {
-        const dx = draggedNode.position.x - groupDragRef.current.startX;
-        const dy = draggedNode.position.y - groupDragRef.current.startY;
-        const childMap = new Map(groupDragRef.current.children.map((c) => [c.id, c]));
+  const updateMultiDrag = useCallback(
+    (fallbackAnchor?: Node, draggedNodes?: Node[]) => {
+      const drag = multiDragRef.current;
+      if (!drag) return;
 
+      const currentNodes = getNodes();
+      const anchor =
+        draggedNodes?.find((n) => n.id === drag.anchorNodeId) ??
+        (fallbackAnchor?.id === drag.anchorNodeId ? fallbackAnchor : undefined) ??
+        currentNodes.find((n) => n.id === drag.anchorNodeId);
+
+      if (!anchor) return;
+
+      const dx = Math.round(anchor.position.x - drag.anchorStartX);
+      const dy = Math.round(anchor.position.y - drag.anchorStartY);
+
+      // Move filhos não-selecionados dentro de grupos arrastados
+      if (drag.extraGroupChildren.length > 0) {
+        const childMap = new Map(drag.extraGroupChildren.map((c) => [c.id, c]));
         setNodes((nds) =>
           nds.map((n) => {
             const c = childMap.get(n.id);
@@ -1331,19 +1410,52 @@ function CanvasInner() {
         );
       }
 
-      const currentNodes = getNodes();
+      if (drag.internalEdgesWithWaypoints.length === 0 && drag.frontierAutoEdgeIds.size === 0) {
+        return;
+      }
+
+      const internalMap = new Map(
+        drag.internalEdgesWithWaypoints.map((item) => [item.id, item.origWaypoints])
+      );
+
+      // Monta mapa de posições mais recentes para cálculo preciso das conexões de fronteira
+      const liveNodeMap = new Map(currentNodes.map((n) => [n.id, n]));
+      if (draggedNodes) {
+        for (const dn of draggedNodes) liveNodeMap.set(dn.id, dn);
+      }
+      if (fallbackAnchor) liveNodeMap.set(fallbackAnchor.id, fallbackAnchor);
+      for (const c of drag.extraGroupChildren) {
+        const existing = liveNodeMap.get(c.id);
+        if (existing) {
+          liveNodeMap.set(c.id, { ...existing, position: { x: c.startX + dx, y: c.startY + dy } });
+        }
+      }
+
       setEdges((eds) =>
         eds.map((edge) => {
-          if ((edge.data as { routingMode?: string } | undefined)?.routingMode === 'manual') {
-            return edge;
+          // Conexão interna com dobras manuais: translação rígida 1:1 com a seleção
+          const origWps = internalMap.get(edge.id);
+          if (origWps) {
+            return {
+              ...edge,
+              data: {
+                ...(edge.data ?? {}),
+                waypoints: origWps.map((w) => ({ x: w.x + dx, y: w.y + dy })),
+              },
+            };
           }
-          const sourceNode = currentNodes.find((n) => n.id === edge.source);
-          const targetNode = currentNodes.find((n) => n.id === edge.target);
-          if (!sourceNode || !targetNode) return edge;
-          const best = computeBestEdgeHandles(sourceNode, targetNode)
-          if (edge.sourceHandle !== best.s || edge.targetHandle !== best.t) {
-            return { ...edge, sourceHandle: best.s, targetHandle: best.t };
+
+          // Conexão de fronteira automática: adapta lados sem mexer nos nós parados
+          if (drag.frontierAutoEdgeIds.has(edge.id)) {
+            const sourceNode = liveNodeMap.get(edge.source);
+            const targetNode = liveNodeMap.get(edge.target);
+            if (!sourceNode || !targetNode) return edge;
+            const best = computeBestEdgeHandles(sourceNode, targetNode);
+            if (edge.sourceHandle !== best.s || edge.targetHandle !== best.t) {
+              return { ...edge, sourceHandle: best.s, targetHandle: best.t };
+            }
           }
+
           return edge;
         })
       );
@@ -1351,45 +1463,139 @@ function CanvasInner() {
     [getNodes, setNodes, setEdges]
   );
 
-  const onNodeDragStop = useCallback(
-    (_: unknown, node: Node) => {
-      const updates: Array<{ id: string; x: number; y: number }> = [
-        { id: node.id, x: Math.round(node.position.x), y: Math.round(node.position.y) },
-      ];
+  const finishMultiDrag = useCallback(
+    async (fallbackAnchor?: Node, draggedNodes?: Node[]) => {
+      const drag = multiDragRef.current;
+      multiDragRef.current = null;
 
-      if (groupDragRef.current && groupDragRef.current.groupId === node.id) {
-        const dx = node.position.x - groupDragRef.current.startX;
-        const dy = node.position.y - groupDragRef.current.startY;
-        for (const child of groupDragRef.current.children) {
-          updates.push({
-            id: child.id,
-            x: Math.round(child.startX + dx),
-            y: Math.round(child.startY + dy),
-          });
-        }
-        groupDragRef.current = null;
-      }
-
-      persistNodePositions(updates);
-
-      // Persiste os melhores lados recalculados das conexões automáticas ligadas aos nós movidos
-      const movedIds = new Set(updates.map((u) => u.id));
       const latestNodes = getNodes();
-      const storeEdges = useKnowledgeStore.getState().canvasEdges;
-      for (const ce of storeEdges) {
-        if (ce.routingMode === 'manual') continue;
-        if (!movedIds.has(ce.sourceNodeId) && !movedIds.has(ce.targetNodeId)) continue;
-        const src = latestNodes.find((n) => n.id === ce.sourceNodeId);
-        const tgt = latestNodes.find((n) => n.id === ce.targetNodeId);
-        if (!src || !tgt) continue;
-        const best = computeBestEdgeHandles(src, tgt);
-        if (ce.sourceHandle !== best.s || ce.targetHandle !== best.t) {
-          updateCanvasEdge(ce.id, { sourceHandle: best.s, targetHandle: best.t });
+      const latestMap = new Map(latestNodes.map((n) => [n.id, n]));
+      if (draggedNodes) {
+        for (const dn of draggedNodes) latestMap.set(dn.id, dn);
+      }
+      if (fallbackAnchor) latestMap.set(fallbackAnchor.id, fallbackAnchor);
+
+      if (!drag) {
+        if (fallbackAnchor) {
+          await persistNodePositions([
+            {
+              id: fallbackAnchor.id,
+              x: Math.round(fallbackAnchor.position.x),
+              y: Math.round(fallbackAnchor.position.y),
+            },
+          ]);
+        }
+        return;
+      }
+
+      const anchor = latestMap.get(drag.anchorNodeId);
+      const dx = anchor ? Math.round(anchor.position.x - drag.anchorStartX) : 0;
+      const dy = anchor ? Math.round(anchor.position.y - drag.anchorStartY) : 0;
+
+      // 1. Persiste TODOS os nós movidos na seleção (nunca perde nenhum item da multi-seleção)
+      const extraMap = new Map(drag.extraGroupChildren.map((c) => [c.id, c]));
+      const positionUpdates: Array<{ id: string; x: number; y: number }> = [];
+
+      for (const id of drag.movingNodeIds) {
+        const extra = extraMap.get(id);
+        if (extra) {
+          const finalX = Math.round(extra.startX + dx);
+          const finalY = Math.round(extra.startY + dy);
+          positionUpdates.push({ id, x: finalX, y: finalY });
+          const existing = latestMap.get(id);
+          if (existing) latestMap.set(id, { ...existing, position: { x: finalX, y: finalY } });
+        } else {
+          const node = latestMap.get(id);
+          if (node) {
+            positionUpdates.push({
+              id,
+              x: Math.round(node.position.x),
+              y: Math.round(node.position.y),
+            });
+          }
         }
       }
-      
+
+      if (positionUpdates.length > 0) {
+        await persistNodePositions(positionUpdates);
+      }
+
+      // 2. Persiste translação rígida das conexões internas com pontos manuais
+      const edgePersistOps: Array<Promise<void>> = [];
+      if (dx !== 0 || dy !== 0) {
+        for (const item of drag.internalEdgesWithWaypoints) {
+          edgePersistOps.push(
+            updateCanvasEdge(item.id, {
+              waypoints: item.origWaypoints.map((w) => ({ x: w.x + dx, y: w.y + dy })),
+            })
+          );
+        }
+      }
+
+      // 3. Persiste novos lados ótimos apenas das conexões automáticas de fronteira
+      if (drag.frontierAutoEdgeIds.size > 0) {
+        const storeEdges = useKnowledgeStore.getState().canvasEdges;
+        for (const ce of storeEdges) {
+          if (!drag.frontierAutoEdgeIds.has(ce.id)) continue;
+          const src = latestMap.get(ce.sourceNodeId);
+          const tgt = latestMap.get(ce.targetNodeId);
+          if (!src || !tgt) continue;
+          const best = computeBestEdgeHandles(src, tgt);
+          if (ce.sourceHandle !== best.s || ce.targetHandle !== best.t) {
+            edgePersistOps.push(
+              updateCanvasEdge(ce.id, { sourceHandle: best.s, targetHandle: best.t })
+            );
+          }
+        }
+      }
+
+      if (edgePersistOps.length > 0) {
+        await Promise.all(edgePersistOps);
+      }
     },
-    [persistNodePositions, getNodes, updateCanvasEdge]
+    [getNodes, persistNodePositions, updateCanvasEdge]
+  );
+
+  const onNodeDragStart = useCallback(
+    (_: unknown, node: Node, draggedNodes?: Node[]) => {
+      startMultiDrag(node, draggedNodes);
+    },
+    [startMultiDrag]
+  );
+
+  const onNodeDrag = useCallback(
+    (_: unknown, draggedNode: Node, draggedNodes?: Node[]) => {
+      updateMultiDrag(draggedNode, draggedNodes);
+    },
+    [updateMultiDrag]
+  );
+
+  const onNodeDragStop = useCallback(
+    (_: unknown, node: Node, draggedNodes?: Node[]) => {
+      finishMultiDrag(node, draggedNodes);
+    },
+    [finishMultiDrag]
+  );
+
+  const onSelectionDragStart = useCallback(
+    (_: unknown, draggedNodes: Node[]) => {
+      startMultiDrag(draggedNodes[0], draggedNodes);
+    },
+    [startMultiDrag]
+  );
+
+  const onSelectionDrag = useCallback(
+    (_: unknown, draggedNodes: Node[]) => {
+      updateMultiDrag(draggedNodes[0], draggedNodes);
+    },
+    [updateMultiDrag]
+  );
+
+  const onSelectionDragStop = useCallback(
+    (_: unknown, draggedNodes: Node[]) => {
+      finishMultiDrag(draggedNodes[0], draggedNodes);
+    },
+    [finishMultiDrag]
   );
 
   const onConnect = useCallback(
@@ -1983,6 +2189,10 @@ function CanvasInner() {
         onNodeDragStart={onNodeDragStart}
         onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}
+        onSelectionDragStart={onSelectionDragStart}
+        onSelectionDrag={onSelectionDrag}
+        onSelectionDragStop={onSelectionDragStop}
+        multiSelectionKeyCode={['Control', 'Meta', 'Shift']}
         onConnect={onConnect}
         onConnectStart={onConnectStart}
         onConnectEnd={onConnectEnd}

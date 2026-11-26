@@ -11,6 +11,9 @@ import {
   ChevronDown,
   ChevronUp,
   Sparkles,
+  PanelLeft,
+  PanelRight,
+  PanelTop,
 } from 'lucide-react';
 import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryFactory';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
@@ -42,13 +45,23 @@ interface PdfStudyPanelProps {
 
 export function PdfStudyPanel({ isResizing, onClose }: PdfStudyPanelProps) {
   const { createCardFromPdf, setViewMode } = useKnowledgeStore();
-  const { addToast, openConfirm, requestFocusCard, setInlineEditingCardId } = useUiStore();
+  const {
+    theme,
+    preferences,
+    updatePreferences,
+    addToast,
+    openConfirm,
+    requestFocusCard,
+    setInlineEditingCardId,
+  } = useUiStore();
+  const pdfSide = preferences.pdfSide;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [docs, setDocs] = useState<LocalPdfDoc[]>([]);
   const [activeDocId, setActiveDocId] = useState<string | null>(null);
   const [activeBlobUrl, setActiveBlobUrl] = useState<string | null>(null);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [showNativeToolbar, setShowNativeToolbar] = useState(false);
 
   // Painel de Captura Rápida -> Canvas
   const [captureOpen, setCaptureOpen] = useState(true);
@@ -76,6 +89,10 @@ export function PdfStudyPanel({ isResizing, onClose }: PdfStudyPanelProps) {
   };
 
   const activeDoc = docs.find((d) => d.id === activeDocId) ?? null;
+
+  const iframeSrc = activeBlobUrl
+    ? `${activeBlobUrl}#toolbar=${showNativeToolbar ? 1 : 0}&navpanes=0&view=FitH`
+    : null;
 
   // Carrega o Blob do PDF ativo no IndexedDB sem vazamento de memória
   useEffect(() => {
@@ -184,9 +201,9 @@ export function PdfStudyPanel({ isResizing, onClose }: PdfStudyPanelProps) {
         const file = e.dataTransfer.files?.[0];
         if (file) handleImportPdfFile(file);
       }}
-      className={`relative flex h-full flex-col border-r border-zinc-800/90 bg-[#12151B] ${
-        isDraggingFile ? 'ring-2 ring-inset ring-indigo-500' : ''
-      }`}
+      className={`relative flex h-full flex-col border-zinc-800/90 bg-[#12151B] ${
+        pdfSide === 'right' ? 'md:border-l' : 'md:border-r'
+      } ${isDraggingFile ? 'ring-2 ring-inset ring-indigo-500' : ''}`}
     >
       {/* CABEÇALHO DO LEITOR DE PDF */}
       <div className="flex items-center justify-between gap-2 border-b border-zinc-800/80 px-3 py-2">
@@ -221,6 +238,49 @@ export function PdfStudyPanel({ isResizing, onClose }: PdfStudyPanelProps) {
           >
             <Upload className="h-3.5 w-3.5" /> Importar
           </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              updatePreferences({ pdfSide: pdfSide === 'left' ? 'right' : 'left' })
+            }
+            className="hidden rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-800 hover:text-indigo-300 md:inline-flex"
+            title={
+              pdfSide === 'left'
+                ? 'Mover Leitor de PDF para o lado direito'
+                : 'Mover Leitor de PDF para o lado esquerdo'
+            }
+            aria-label={
+              pdfSide === 'left'
+                ? 'Mover leitor de PDF para a direita'
+                : 'Mover leitor de PDF para a esquerda'
+            }
+          >
+            {pdfSide === 'left' ? (
+              <PanelRight className="h-3.5 w-3.5" />
+            ) : (
+              <PanelLeft className="h-3.5 w-3.5" />
+            )}
+          </button>
+
+          {activeBlobUrl && (
+            <button
+              type="button"
+              onClick={() => setShowNativeToolbar((v) => !v)}
+              className={`rounded-lg p-1.5 transition ${
+                showNativeToolbar
+                  ? 'bg-indigo-600/20 text-indigo-300'
+                  : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'
+              }`}
+              title={
+                showNativeToolbar
+                  ? 'Ocultar barra nativa do navegador (modo limpo sem barra dupla)'
+                  : 'Mostrar barra nativa do PDF (imprimir / ferramentas do navegador)'
+              }
+            >
+              <PanelTop className="h-3.5 w-3.5" />
+            </button>
+          )}
 
           {activeBlobUrl && (
             <a
@@ -269,13 +329,17 @@ export function PdfStudyPanel({ isResizing, onClose }: PdfStudyPanelProps) {
       </div>
 
       {/* VISUALIZADOR DE PDF */}
-      <div className="relative min-h-0 flex-1 bg-[#0F1115]">
-        {activeBlobUrl ? (
+      <div className="relative min-h-0 flex-1 overflow-hidden bg-[#0F1115]">
+        {iframeSrc ? (
           <>
             <iframe
-              src={activeBlobUrl}
+              key={`${activeDoc?.id ?? 'pdf'}-${showNativeToolbar ? 'tb1' : 'tb0'}`}
+              src={iframeSrc}
               title={activeDoc?.name ?? 'PDF'}
-              className={`h-full w-full border-0 bg-white ${isResizing ? 'pointer-events-none' : ''}`}
+              style={{ colorScheme: theme === 'paper' ? 'light' : 'dark' }}
+              className={`block h-full w-full border-0 ${
+                theme === 'paper' ? 'bg-white' : 'bg-[#0F1115]'
+              } ${isResizing ? 'pointer-events-none' : ''}`}
             />
             {isResizing && <div className="absolute inset-0 z-10 cursor-col-resize" />}
           </>
@@ -288,8 +352,8 @@ export function PdfStudyPanel({ isResizing, onClose }: PdfStudyPanelProps) {
               Estude com PDF lado a lado
             </h3>
             <p className="mt-1 max-w-xs text-xs leading-relaxed text-zinc-400">
-              Arraste uma apostila, edital ou PDF aqui — ou clique em Importar — para ler na
-              esquerda enquanto constrói seu mapa mental na direita.
+              Arraste uma apostila, edital ou PDF aqui — ou clique em Importar — para ler lado a
+              lado enquanto constrói seu mapa mental.
             </p>
             <button
               type="button"
@@ -328,7 +392,7 @@ export function PdfStudyPanel({ isResizing, onClose }: PdfStudyPanelProps) {
                 value={capturePage}
                 onChange={(e) => setCapturePage(e.target.value)}
                 placeholder="Pág."
-                className="w-16 rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1.5 text-center text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none"
+                className="w-16 rounded-lg border border-zinc-800 bg-[#0F1115] px-2.5 py-1.5 text-center text-xs text-zinc-100 placeholder:text-zinc-500 focus:border-indigo-500 focus:outline-none"
               />
             </div>
 

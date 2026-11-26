@@ -47,6 +47,8 @@ export function AppShell() {
 
   const {
     theme,
+    preferences, 
+    updatePreferences,
     hydrateUi,
     toggleTheme,
     isBackupOpen,
@@ -69,10 +71,20 @@ export function AppShell() {
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [workspaceDraft, setWorkspaceDraft] = useState('');
 
-  // Controle suave da largura do Leitor de PDF (Tela Dividida)
+  // Controle suave da largura e responsividade do Leitor de PDF (Tela Dividida)
   const mainAreaRef = useRef<HTMLDivElement>(null);
-  const [pdfWidthPct, setPdfWidthPct] = useState(42);
+  const pdfSide = preferences.pdfSide;
+  const [pdfWidthPct, setPdfWidthPct] = useState(preferences.pdfWidthPct || 42);
   const [isResizingPdf, setIsResizingPdf] = useState(false);
+  const [mobileSplitTab, setMobileSplitTab] = useState<'pdf' | 'workspace'>('pdf');
+  const latestPdfWidthRef = useRef(pdfWidthPct);
+  latestPdfWidthRef.current = pdfWidthPct;
+
+  useEffect(() => {
+    if (!isResizingPdf) {
+      setPdfWidthPct(preferences.pdfWidthPct || 42);
+    }
+  }, [preferences.pdfWidthPct, isResizingPdf]);
 
   useEffect(() => {
     hydrateUi();
@@ -105,15 +117,25 @@ export function AppShell() {
   const handleDividerPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isResizingPdf || !mainAreaRef.current) return;
     const rect = mainAreaRef.current.getBoundingClientRect();
-    const rawPct = ((e.clientX - rect.left) / rect.width) * 100;
-    const clamped = Math.max(26, Math.min(68, rawPct));
-    setPdfWidthPct(Math.round(clamped * 10) / 10);
+    const rawPct =
+      pdfSide === 'right'
+        ? ((rect.right - e.clientX) / rect.width) * 100
+        : ((e.clientX - rect.left) / rect.width) * 100;
+    const clamped = Math.max(24, Math.min(70, rawPct));
+    const rounded = Math.round(clamped * 10) / 10;
+    latestPdfWidthRef.current = rounded;
+    setPdfWidthPct(rounded);
   };
 
   const handleDividerPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isResizingPdf) return;
-    e.currentTarget.releasePointerCapture(e.pointerId);
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // ignora
+    }
     setIsResizingPdf(false);
+    updatePreferences({ pdfWidthPct: latestPdfWidthRef.current });
   };
 
   const handleCreateWorkspace = async () => {
@@ -375,8 +397,12 @@ export function AppShell() {
         ) : (
           <button
             onClick={() => setZenMode(false)}
-            className={`fixed left-4 z-50 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920]/90 px-3 py-1.5 text-xs font-medium text-zinc-300 shadow-xl backdrop-blur-md transition hover:border-indigo-500 hover:text-white ${
-              isPdfReaderOpen ? 'top-14' : 'top-3'
+            className={`fixed z-50 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920]/90 px-3 py-1.5 text-xs font-medium text-zinc-300 shadow-xl backdrop-blur-md transition hover:border-indigo-500 hover:text-white ${
+              isPdfReaderOpen
+                ? pdfSide === 'left'
+                  ? 'right-4 top-3'
+                  : 'left-4 top-3'
+                : 'left-4 top-3'
             }`}
             title="Sair do Modo Zen (Esc)"
           >
@@ -384,28 +410,64 @@ export function AppShell() {
           </button>
         )}
 
-        {/* ÁREA DE CONTEÚDO: Suporte nativo a Tela Dividida com PDF + Divisória Arrastável */}
+        {/* ABAS RESPONSIVAS EM TELAS PEQUENAS (< 768px): alterna sem desmontar o iframe do PDF */}
+        {isPdfReaderOpen && (
+          <div className="flex shrink-0 items-center gap-1 border-b border-zinc-800/80 bg-[#12151B] px-3 py-1.5 md:hidden">
+            <button
+              type="button"
+              onClick={() => setMobileSplitTab('pdf')}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium transition ${
+                mobileSplitTab === 'pdf'
+                  ? 'bg-rose-500/20 text-rose-200 ring-1 ring-rose-500/40'
+                  : 'text-zinc-400 hover:bg-zinc-800/60'
+              }`}
+            >
+              <FileText className="h-3.5 w-3.5" /> Leitor PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileSplitTab('workspace')}
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium transition ${
+                mobileSplitTab === 'workspace'
+                  ? 'bg-indigo-500/20 text-indigo-200 ring-1 ring-indigo-500/40'
+                  : 'text-zinc-400 hover:bg-zinc-800/60'
+              }`}
+            >
+              <Layers className="h-3.5 w-3.5" />{' '}
+              {viewMode === 'book' ? 'Livro' : viewMode === 'review' ? 'Revisão' : 'Canvas'}
+            </button>
+          </div>
+        )}
+
+        {/* ÁREA DE CONTEÚDO: Mesma ordem DOM sempre (alterna lado via flex-row-reverse sem recarregar o PDF) */}
         <div
           ref={mainAreaRef}
-          className={`relative flex flex-1 overflow-hidden ${isResizingPdf ? 'select-none' : ''}`}
+          className={`relative flex flex-1 overflow-hidden ${
+            pdfSide === 'right' ? 'md:flex-row-reverse' : 'md:flex-row'
+          } ${isResizingPdf ? 'select-none' : ''}`}
         >
           {isPdfReaderOpen && (
             <>
-              <div style={{ width: `${pdfWidthPct}%` }} className="h-full shrink-0 overflow-hidden">
+              <div
+                style={{ ['--kc-pdf-width' as string]: `${pdfWidthPct}%` }}
+                className={`h-full shrink-0 overflow-hidden md:block md:w-[var(--kc-pdf-width)] ${
+                  mobileSplitTab === 'pdf' ? 'w-full' : 'hidden'
+                }`}
+              >
                 <PdfStudyPanel
                   isResizing={isResizingPdf}
                   onClose={() => setPdfReaderOpen(false)}
                 />
               </div>
 
-              {/* Divisória arrastável entre PDF e Canvas */}
+              {/* Divisória arrastável entre PDF e Área Principal (desktop/tablet) */}
               <div
                 onPointerDown={handleDividerPointerDown}
                 onPointerMove={handleDividerPointerMove}
                 onPointerUp={handleDividerPointerUp}
                 onPointerCancel={handleDividerPointerUp}
                 title="Arraste para redimensionar a tela dividida"
-                className={`group relative z-20 flex w-1.5 shrink-0 cursor-col-resize items-center justify-center transition-colors ${
+                className={`group relative z-20 hidden w-1.5 shrink-0 cursor-col-resize items-center justify-center transition-colors md:flex ${
                   isResizingPdf ? 'bg-indigo-500' : 'bg-zinc-800/80 hover:bg-indigo-500/70'
                 }`}
               >
@@ -414,7 +476,11 @@ export function AppShell() {
             </>
           )}
 
-          <div className="relative min-w-0 flex-1 overflow-hidden">
+          <div
+            className={`relative min-w-0 flex-1 overflow-hidden md:block ${
+              isPdfReaderOpen && mobileSplitTab === 'pdf' ? 'hidden' : 'block'
+            }`}
+          >
             {viewMode === 'canvas' && <KnowledgeCanvas />}
             {viewMode === 'book' && <BookModeView />}
             {viewMode === 'review' && <ReviewPanel />}

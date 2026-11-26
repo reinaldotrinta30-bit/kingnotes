@@ -722,3 +722,12 @@ html[data-custom-font="active"] .kc-free-text-prose {
 .react-flow__edgelabel-renderer {
   z-index: 1005 !important;
 }
+
+/* Garante barras de rolagem e controles nativos no mesmo tema do sistema */
+html.dark {
+  color-scheme: dark;
+}
+
+html.paper {
+  color-scheme: light;
+}

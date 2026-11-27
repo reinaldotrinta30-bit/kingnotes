@@ -68,6 +68,9 @@ import {
   ArrowLeft,
   Wand2,
   Pencil,
+  FolderTree,
+  ChevronRight,
+  X,
   Minus,
 } from 'lucide-react';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
@@ -204,6 +207,7 @@ function CanvasInner() {
     setSelectedEdgeLabelId,
     editingEdgeLabelId,
     setEditingEdgeLabelId,
+    clearTransientCanvasUi,
   } = useUiStore();
   const {
     activeWorkspaceId,
@@ -254,6 +258,7 @@ function CanvasInner() {
   const [isPlacingText, setIsPlacingText] = useState(false);
   const [liveViewport, setLiveViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 });
   const [openHeaderMenu, setOpenHeaderMenu] = useState<null | 'layout' | 'edge' | 'spotlight'>(null);
+  const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
 
   const [globalEdgeType, setGlobalEdgeType] = useState<'smoothstep' | 'default' | 'straight'>('smoothstep');
   const [globalAnimated, setGlobalAnimated] = useState(false);
@@ -894,6 +899,21 @@ function CanvasInner() {
     [hierarchy, selectedHierarchyId]
   );
 
+  const quickHierarchyList = useMemo(() => {
+    const ordered: Array<{ node: (typeof hierarchy)[number]; depth: number }> = [];
+    const visit = (parentId: string | null, depth: number) => {
+      const children = hierarchy
+        .filter((h) => h.parentId === parentId)
+        .sort((a, b) => a.order - b.order || a.createdAt - b.createdAt);
+      for (const child of children) {
+        ordered.push({ node: child, depth });
+        visit(child.id, depth + 1);
+      }
+    };
+    visit(null, 0);
+    return ordered;
+  }, [hierarchy]);
+
   // Restaura última câmera do Workspace
   const restoredWorkspaceRef = useRef<string | null>(null);
   useEffect(() => {
@@ -935,11 +955,14 @@ function CanvasInner() {
   }, [focusRequest, canvasNodes, fitCanvasWithMargins, triggerCardHighlight, clearFocusRequest]);
 
   useEffect(() => {
-    if (!openHeaderMenu) return;
-    const close = () => setOpenHeaderMenu(null);
+    if (!openHeaderMenu && !isContextMenuOpen) return;
+    const close = () => {
+      setOpenHeaderMenu(null);
+      setIsContextMenuOpen(false);
+    };
     document.addEventListener('click', close);
     return () => document.removeEventListener('click', close);
-  }, [openHeaderMenu]);
+  }, [openHeaderMenu, isContextMenuOpen]);
 
   // Ctrl+V de prints direto no Canvas (fora da edição de texto)
   useEffect(() => {
@@ -2869,34 +2892,136 @@ function CanvasInner() {
           </Panel>
         )}
 
-        {/* IDENTIFICAÇÃO CLARA DO CONTEXTO HIERÁRQUICO ATIVO */}
-        {activeBreadcrumb.length > 0 && !zenMode && (
+        {/* NAVEGAÇÃO DE CONTEXTO FLUTUANTE (ÍCONE COMPACTO — NUNCA COBRE A BARRA DE EDIÇÃO) */}
+        {!zenMode && (
           <Panel position="top-left" className="ml-3 mt-3">
-            <div className="flex items-center gap-1.5 rounded-xl border border-indigo-500/35 bg-[#161920]/90 px-3 py-1.5 text-[11px] text-zinc-200 shadow-lg backdrop-blur-xl">
-              {activeBreadcrumb.map((item, idx) => (
-                <React.Fragment key={item.id}>
-                  {idx > 0 && <span className="text-zinc-500">/</span>}
-                  <button
-                    type="button"
-                    onClick={() => selectHierarchy(item.id)}
-                    className={`transition hover:text-indigo-300 ${
-                      idx === activeBreadcrumb.length - 1
-                        ? 'font-semibold text-indigo-300'
-                        : 'text-zinc-400'
-                    }`}
-                  >
-                    {item.title}
-                  </button>
-                </React.Fragment>
-              ))}
+            <div className="relative" onClick={(e) => e.stopPropagation()}>
               <button
                 type="button"
-                onClick={() => selectHierarchy(null)}
-                className="ml-1.5 rounded-md bg-zinc-800/80 px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:bg-zinc-700 hover:text-zinc-100"
-                title="Voltar para Todo o Conhecimento"
+                onClick={() => setIsContextMenuOpen((v) => !v)}
+                className={`relative flex h-9 w-9 items-center justify-center rounded-xl border shadow-lg backdrop-blur-xl transition ${
+                  isContextMenuOpen || activeBreadcrumb.length > 0
+                    ? 'border-indigo-500/50 bg-[#161920]/95 text-indigo-300 hover:bg-indigo-600/20'
+                    : 'border-zinc-800/90 bg-[#161920]/90 text-zinc-400 hover:border-zinc-700 hover:text-zinc-100'
+                }`}
+                title={
+                  activeBreadcrumb.length > 0
+                    ? `Contexto ativo: ${activeBreadcrumb.map((b) => b.title).join(' / ')} — Clique para navegar`
+                    : 'Todo o Conhecimento — Clique para filtrar por Disciplina, Assunto ou Tópico'
+                }
+                aria-label="Abrir navegação de tópicos e contextos"
               >
-                Ver tudo
+                <FolderTree className="h-4 w-4" />
+                {activeBreadcrumb.length > 0 && (
+                  <span className="absolute -right-1 -top-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-indigo-500 px-1 text-[9px] font-bold text-white shadow">
+                    {activeBreadcrumb.length}
+                  </span>
+                )}
               </button>
+
+              {isContextMenuOpen && (
+                <div className="absolute left-0 top-full z-[130] mt-2 flex max-h-[68vh] w-72 flex-col overflow-hidden rounded-2xl border border-indigo-500/35 bg-[#161920]/98 shadow-2xl backdrop-blur-xl">
+                  {/* Cabeçalho + Caminho Ativo */}
+                  <div className="border-b border-zinc-800/80 p-3">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                        Contexto do Mapa
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsContextMenuOpen(false)}
+                        className="rounded p-0.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+
+                    {activeBreadcrumb.length > 0 ? (
+                      <div className="flex flex-wrap items-center gap-1 text-[11px]">
+                        {activeBreadcrumb.map((item, idx) => (
+                          <React.Fragment key={item.id}>
+                            {idx > 0 && <ChevronRight className="h-3 w-3 text-zinc-600" />}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                clearTransientCanvasUi();
+                                selectHierarchy(item.id);
+                                setIsContextMenuOpen(false);
+                              }}
+                              className={`rounded px-1 py-0.5 transition hover:bg-indigo-500/15 hover:text-indigo-200 ${
+                                idx === activeBreadcrumb.length - 1
+                                  ? 'font-semibold text-indigo-300'
+                                  : 'text-zinc-400'
+                              }`}
+                            >
+                              {item.title}
+                            </button>
+                          </React.Fragment>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs font-medium text-indigo-300">
+                        Todo o Conhecimento (Panorama)
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Lista Navegável de Disciplinas / Assuntos / Subassuntos / Tópicos */}
+                  <div className="flex-1 space-y-0.5 overflow-y-auto p-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearTransientCanvasUi();
+                        selectHierarchy(null);
+                        setIsContextMenuOpen(false);
+                      }}
+                      className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs font-medium transition ${
+                        selectedHierarchyId === null
+                          ? 'bg-indigo-600/20 text-indigo-200 ring-1 ring-indigo-500/35'
+                          : 'text-zinc-300 hover:bg-zinc-800/70'
+                      }`}
+                    >
+                      <span>Ver Todo o Conhecimento</span>
+                      {selectedHierarchyId === null && (
+                        <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
+                      )}
+                    </button>
+
+                    {quickHierarchyList.length > 0 && (
+                      <div className="my-1.5 h-px bg-zinc-800/80" />
+                    )}
+
+                    {quickHierarchyList.map(({ node, depth }) => {
+                      const active = selectedHierarchyId === node.id;
+                      return (
+                        <button
+                          key={node.id}
+                          type="button"
+                          onClick={() => {
+                            clearTransientCanvasUi();
+                            selectHierarchy(node.id);
+                            setIsContextMenuOpen(false);
+                          }}
+                          style={{ paddingLeft: `${10 + depth * 14}px` }}
+                          className={`flex w-full items-center justify-between rounded-lg py-1.5 pr-2.5 text-left text-xs transition ${
+                            active
+                              ? 'bg-indigo-600/20 font-semibold text-indigo-200 ring-1 ring-indigo-500/35'
+                              : 'text-zinc-300 hover:bg-zinc-800/70'
+                          }`}
+                        >
+                          <span className="truncate">
+                            {depth > 0 ? '└ ' : ''}
+                            {node.title}
+                          </span>
+                          {active && (
+                            <span className="ml-2 h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-400" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </Panel>
         )}

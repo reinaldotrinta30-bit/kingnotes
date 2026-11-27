@@ -248,12 +248,25 @@ export function KnowledgeCardEditorPane({
   const [isNotebookModalOpen, setIsNotebookModalOpen] = useState(false);
   const [showInspector, setShowInspector] = useState(() => !isSplitActive && isExpanded);
 
+  // Detecta se há largura confortável para acoplar a barra de formatação no cabeçalho superior
+  const [isWideHeader, setIsWideHeader] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(min-width: 1200px)');
+    const sync = () => setIsWideHeader(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+
+  const dockToolbarInHeader = isExpanded && !isSplitActive && isWideHeader && slot === 'primary';
+
   // Estado explícito de rascunho + indicador de alterações não salvas
   const [titleDraft, setTitleDraft] = useState(fullCard.meta.title);
   const [isDirty, setIsDirty] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<number>(fullCard.meta.updatedAt);
 
-  // Popovers da barra fixa
+  // Popovers da barra de formatação
   const [openMenu, setOpenMenu] = useState<
     null | 'table' | 'hr' | 'color' | 'highlight' | 'wikilink' | 'splitpicker'
   >(null);
@@ -279,7 +292,6 @@ export function KnowledgeCardEditorPane({
   const triggerIndexRef = useRef(0);
   triggerIndexRef.current = triggerIndex;
 
-  // Ajusta visibilidade do inspetor ao alternar entre Tela Ampliada, Lateral e Split View
   useEffect(() => {
     if (isSplitActive) {
       setShowInspector(false);
@@ -288,12 +300,10 @@ export function KnowledgeCardEditorPane({
     }
   }, [isSplitActive, isExpanded]);
 
-  // Sincroniza título externo caso alterado em outro ponto
   useEffect(() => {
     if (!isDirty) setTitleDraft(fullCard.meta.title);
   }, [fullCard.meta.title, isDirty]);
 
-  // Sincroniza dirty state com a UiStore para proteção ao trocar disciplina/workspace
   useEffect(() => {
     if (slot === 'primary') {
       setHasUnsavedEditorChanges(isDirty);
@@ -547,7 +557,6 @@ export function KnowledgeCardEditorPane({
 
   editorRef.current = editor;
 
-  // Atalho Ctrl+S para salvar explicitamente
   useEffect(() => {
     const onSaveKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
@@ -599,7 +608,6 @@ export function KnowledgeCardEditorPane({
   const typoStyle = buildTypographyCssVars(fullCard.meta.typography, DEFAULT_CARD_TYPOGRAPHY);
   const callout = resolveCardCallout(fullCard.meta);
 
-  // Ações rápidas do Bubble Menu
   const handleCreateQuickFlashcard = () => {
     if (!bubbleMenu || !quickFlashcardFront.trim()) return;
     const fc: EmbeddedFlashcard = {
@@ -732,11 +740,236 @@ export function KnowledgeCardEditorPane({
     );
   };
 
+  // Barra de formatação inteligente: acopla no cabeçalho (modo ampliado) ou abaixo dele (Lateral / Split)
+  const renderFormattingToolbar = (inHeader: boolean) => {
+    if (!editor) return null;
+
+    const iconBtn = (active = false) =>
+      `rounded-lg ${inHeader ? 'p-1.5' : 'p-1.5'} transition ${
+        active ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
+      }`;
+
+    return (
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className={
+          inHeader
+            ? 'flex flex-nowrap items-center gap-0.5 rounded-xl border border-zinc-800/90 bg-[#181C24]/95 px-2 py-1 shadow-inner'
+            : 'sticky top-0 z-20 mb-5 flex w-full flex-wrap items-center gap-0.5 rounded-xl border border-zinc-800/90 bg-[#181C24]/95 px-2 py-1.5 shadow-lg backdrop-blur-md'
+        }
+      >
+        {[1, 2, 3].map((lvl) => (
+          <button
+            key={lvl}
+            type="button"
+            onClick={() => editor.chain().focus().toggleHeading({ level: lvl as 1 | 2 | 3 }).run()}
+            className={`rounded-lg px-1.5 py-1 text-[11px] font-bold transition ${
+              editor.isActive('heading', { level: lvl })
+                ? 'bg-indigo-600 text-white'
+                : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'
+            }`}
+            title={`Título H${lvl}`}
+          >
+            H{lvl}
+          </button>
+        ))}
+
+        <div className="mx-1 h-4 w-px shrink-0 bg-zinc-800" />
+
+        <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={iconBtn(editor.isActive('bold'))} title="Negrito (Ctrl+B)"><Bold className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={iconBtn(editor.isActive('italic'))} title="Itálico (Ctrl+I)"><Italic className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={iconBtn(editor.isActive('underline'))} title="Sublinhado (Ctrl+U)"><UnderlineIcon className="h-3.5 w-3.5" /></button>
+
+        {/* Cor do texto */}
+        <div className="relative">
+          <button type="button" onClick={() => setOpenMenu(openMenu === 'color' ? null : 'color')} className={iconBtn(openMenu === 'color')} title="Cor do texto">
+            <Palette className="h-3.5 w-3.5" />
+          </button>
+          {openMenu === 'color' && (
+            <div className="absolute left-0 top-full z-50 mt-2 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
+              {TEXT_COLORS.map((hex) => (
+                <button key={hex} type="button" onClick={() => { editor.chain().focus().setColor(hex).run(); setOpenMenu(null); }} className="h-4 w-4 rounded-full border border-zinc-700 hover:scale-125" style={{ backgroundColor: hex }} />
+              ))}
+              <button type="button" onClick={() => { editor.chain().focus().unsetColor().run(); setOpenMenu(null); }} className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">Reset</button>
+            </div>
+          )}
+        </div>
+
+        {/* Marca-texto */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setOpenMenu(openMenu === 'highlight' ? null : 'highlight')}
+            className={`rounded-lg p-1.5 transition ${
+              editor.isActive('highlight') ? 'bg-amber-500/20 text-amber-300' : 'text-amber-300 hover:bg-zinc-800'
+            }`}
+            title="Marca-texto"
+          >
+            <Highlighter className="h-3.5 w-3.5" />
+          </button>
+          {openMenu === 'highlight' && (
+            <div className="absolute left-0 top-full z-50 mt-2 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
+              {HIGHLIGHT_COLORS.map((hex) => (
+                <button key={hex} type="button" onClick={() => { editor.chain().focus().toggleHighlight({ color: hex }).run(); setOpenMenu(null); }} className="h-4 w-4 rounded border border-zinc-700 hover:scale-125" style={{ backgroundColor: hex }} />
+              ))}
+              <button type="button" onClick={() => { editor.chain().focus().unsetHighlight().run(); setOpenMenu(null); }} className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">Limpar</button>
+            </div>
+          )}
+        </div>
+
+        {/* Fita de Ocultação */}
+        <button
+          type="button"
+          onClick={() => editor.chain().focus().toggleMark('studyTape').run()}
+          className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold transition ${
+            editor.isActive('studyTape')
+              ? 'bg-amber-500 text-zinc-950'
+              : 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
+          }`}
+          title="Fita de ocultação para memorização ativa"
+        >
+          <EyeOff className="h-3 w-3" />
+          <span className="hidden 2xl:inline">Fita</span>
+        </button>
+
+        <div className="mx-1 h-4 w-px shrink-0 bg-zinc-800" />
+
+        <button type="button" onClick={() => editor.chain().focus().setTextAlign('left').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Alinhar à esquerda"><AlignLeft className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => editor.chain().focus().setTextAlign('center').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Centralizar"><AlignCenter className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => editor.chain().focus().setTextAlign('right').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Alinhar à direita"><AlignRight className="h-3.5 w-3.5" /></button>
+
+        <div className="mx-1 h-4 w-px shrink-0 bg-zinc-800" />
+
+        <button type="button" onClick={() => editor.chain().focus().toggleBulletList().run()} className={iconBtn(editor.isActive('bulletList'))} title="Lista com marcadores"><List className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => editor.chain().focus().toggleOrderedList().run()} className={iconBtn(editor.isActive('orderedList'))} title="Lista numerada"><ListOrdered className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => editor.chain().focus().toggleTaskList().run()} className={iconBtn(editor.isActive('taskList'))} title="Checklist"><CheckSquare className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => editor.chain().focus().toggleBlockquote().run()} className={iconBtn(editor.isActive('blockquote'))} title="Citação / Lei Seca"><Quote className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => editor.chain().focus().toggleCodeBlock().run()} className={iconBtn(editor.isActive('codeBlock'))} title="Bloco de código"><Code2 className="h-3.5 w-3.5" /></button>
+
+        {/* Tabela */}
+        <div className="relative">
+          <button type="button" onClick={() => setOpenMenu(openMenu === 'table' ? null : 'table')} className={iconBtn(editor.isActive('table'))} title="Tabela">
+            <TableIcon className="h-3.5 w-3.5" />
+          </button>
+          {openMenu === 'table' && (
+            <div className="absolute left-0 top-full z-50 mt-2 flex w-48 flex-col gap-0.5 rounded-xl border border-zinc-800 bg-[#161920] p-1.5 text-xs shadow-2xl">
+              <button type="button" onClick={() => { editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left font-medium text-indigo-300 hover:bg-zinc-800">Inserir Tabela (3×3)</button>
+              <button type="button" onClick={() => { editor.chain().focus().addColumnAfter().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-300 hover:bg-zinc-800">+ Coluna à direita</button>
+              <button type="button" onClick={() => { editor.chain().focus().addRowAfter().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-300 hover:bg-zinc-800">+ Linha abaixo</button>
+              <button type="button" onClick={() => { editor.chain().focus().deleteColumn().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-400 hover:bg-zinc-800">- Remover coluna</button>
+              <button type="button" onClick={() => { editor.chain().focus().deleteRow().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-400 hover:bg-zinc-800">- Remover linha</button>
+              <div className="my-1 h-px bg-zinc-800" />
+              <button type="button" onClick={() => { editor.chain().focus().deleteTable().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-rose-400 hover:bg-rose-500/15">Excluir tabela</button>
+            </div>
+          )}
+        </div>
+
+        {/* Divisória */}
+        <div className="relative">
+          <button type="button" onClick={() => setOpenMenu(openMenu === 'hr' ? null : 'hr')} className={iconBtn(openMenu === 'hr')} title="Linha divisória">
+            <Minus className="h-3.5 w-3.5" />
+          </button>
+          {openMenu === 'hr' && (
+            <div className="absolute right-0 top-full z-50 mt-2 flex w-40 flex-col gap-1 rounded-xl border border-zinc-800 bg-[#161920] p-1.5 text-xs shadow-2xl">
+              <button type="button" onClick={() => { editor.chain().focus().insertContent({ type: 'horizontalRule', attrs: { class: 'kc-hr-solid' } }).run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-200 hover:bg-zinc-800">Linha Contínua</button>
+              <button type="button" onClick={() => { editor.chain().focus().insertContent({ type: 'horizontalRule', attrs: { class: 'kc-hr-dashed' } }).run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-200 hover:bg-zinc-800">Linha Tracejada</button>
+            </div>
+          )}
+        </div>
+
+        <div className="mx-1 h-4 w-px shrink-0 bg-zinc-800" />
+
+        {/* Ícones compactos: Fórmula, Diagrama, Link e Anexo (Clipe) */}
+        <button
+          type="button"
+          onClick={() => editor.chain().focus().insertContent({ type: 'mathBlock', attrs: { latex: '' } }).run()}
+          className="rounded-lg p-1.5 text-indigo-300 transition hover:bg-indigo-500/15"
+          title="Inserir Fórmula Matemática (KaTeX)"
+          aria-label="Inserir fórmula matemática"
+        >
+          <Sigma className="h-3.5 w-3.5" />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => editor.chain().focus().insertContent({ type: 'mermaidBlock' }).run()}
+          className="rounded-lg p-1.5 text-emerald-300 transition hover:bg-emerald-500/15"
+          title="Inserir Diagrama / Fluxograma (Mermaid)"
+          aria-label="Inserir diagrama"
+        >
+          <GitFork className="h-3.5 w-3.5" />
+        </button>
+
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => {
+              setWikiQuery('');
+              setOpenMenu(openMenu === 'wikilink' ? null : 'wikilink');
+            }}
+            className="rounded-lg p-1.5 text-sky-300 transition hover:bg-sky-500/15"
+            title="Conectar outro Card ([[Link]])"
+            aria-label="Conectar outro card"
+          >
+            <Link2 className="h-3.5 w-3.5" />
+          </button>
+          {openMenu === 'wikilink' && (
+            <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
+              <input
+                autoFocus
+                value={wikiQuery}
+                onChange={(e) => setWikiQuery(e.target.value)}
+                placeholder="Buscar card para conectar..."
+                className="mb-2 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100 focus:border-indigo-500 focus:outline-none"
+              />
+              <div className="max-h-48 space-y-0.5 overflow-y-auto">
+                {otherCards.map((target) => (
+                  <button
+                    key={target.id}
+                    type="button"
+                    onClick={() => {
+                      editor
+                        .chain()
+                        .focus()
+                        .insertContent({
+                          type: 'wikiLink',
+                          attrs: { cardId: target.id, label: target.title },
+                        })
+                        .run();
+                      setOpenMenu(null);
+                    }}
+                    className="block w-full truncate rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-200 hover:bg-indigo-600/20 hover:text-indigo-200"
+                  >
+                    {target.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <label
+          className="flex cursor-pointer items-center justify-center rounded-lg p-1.5 text-zinc-300 transition hover:bg-zinc-800 hover:text-white"
+          title="Anexar imagem, PDF ou áudio"
+          aria-label="Anexar mídia"
+        >
+          <Paperclip className="h-3.5 w-3.5" />
+          <input type="file" accept="image/*,application/pdf,audio/*" className="hidden" onChange={handleAttachFile} />
+        </label>
+      </div>
+    );
+  };
+
   return (
     <div className="relative flex h-full min-w-0 flex-1 flex-col bg-[#13161C]/98">
-      {/* CABEÇALHO DO EDITOR AVANÇADO */}
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800/80 px-5 py-3">
-        <div className="flex min-w-0 items-center gap-2.5">
+      {/* CABEÇALHO DO EDITOR AVANÇADO (ACOMODA A BARRA DE FORMATAÇÃO NO MODO AMPLIADO) */}
+      <header className="relative z-30 flex shrink-0 items-center justify-between gap-2 border-b border-zinc-800/80 px-4 py-2.5">
+        {/* Esquerda: Identificação compacta + Status de Salvamento */}
+        <div
+          className={`flex min-w-0 items-center gap-2 ${
+            dockToolbarInHeader ? 'max-w-[190px] shrink-0' : 'flex-1'
+          }`}
+        >
           {slot === 'secondary' && (
             <span className="shrink-0 rounded-md bg-indigo-500/15 px-2 py-0.5 text-[10px] font-semibold text-indigo-300">
               LADO A LADO
@@ -746,25 +979,26 @@ export function KnowledgeCardEditorPane({
             <span className="shrink-0 text-base leading-none">{fullCard.meta.emoji}</span>
           )}
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-xs font-semibold text-zinc-100">
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-xs font-semibold text-zinc-100" title={titleDraft || 'Sem título'}>
                 {titleDraft || 'Sem título'}
               </span>
               {isDirty ? (
-                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-300">
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
                   <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                  Não salvo
+                  <span className={dockToolbarInHeader ? 'hidden 2xl:inline' : ''}>Não salvo</span>
                 </span>
               ) : (
                 <span
-                  className="hidden shrink-0 items-center gap-1 text-[10.5px] text-emerald-400/90 sm:inline-flex"
-                  title={`Último salvamento: ${new Date(lastSavedAt).toLocaleTimeString('pt-BR')}`}
+                  className="inline-flex shrink-0 items-center gap-1 text-[10.5px] text-emerald-400/90"
+                  title={`Salvo às ${new Date(lastSavedAt).toLocaleTimeString('pt-BR')}`}
                 >
-                  <CheckCircle2 className="h-3 w-3" /> Salvo
+                  <CheckCircle2 className="h-3 w-3" />
+                  <span className={dockToolbarInHeader ? 'hidden 2xl:inline' : 'hidden sm:inline'}>Salvo</span>
                 </span>
               )}
             </div>
-            {breadcrumb.length > 0 && (
+            {breadcrumb.length > 0 && !dockToolbarInHeader && (
               <p className="truncate text-[10.5px] text-zinc-500">
                 {breadcrumb.map((b) => b.title).join(' › ')}
               </p>
@@ -772,12 +1006,19 @@ export function KnowledgeCardEditorPane({
           </div>
         </div>
 
+        {/* Centro: Barra de Formatação acoplada no cabeçalho quando em Tela Ampliada */}
+        {dockToolbarInHeader && (
+          <div className="flex min-w-0 flex-1 items-center justify-center">
+            {renderFormattingToolbar(true)}
+          </div>
+        )}
+
+        {/* Direita: Salvar + Modos + Fechar */}
         <div className="flex shrink-0 items-center gap-1.5">
-          {/* Botão Salvar explícito (Ctrl+S) */}
           <button
             type="button"
             onClick={() => commitSaveNow(true)}
-            className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
+            className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-semibold transition ${
               isDirty
                 ? 'bg-indigo-600 text-white shadow-sm hover:bg-indigo-500'
                 : 'border border-zinc-800 bg-[#0F1115] text-zinc-300 hover:border-zinc-700 hover:text-white'
@@ -788,7 +1029,6 @@ export function KnowledgeCardEditorPane({
             <span>Salvar</span>
           </button>
 
-          {/* Split View: abrir 2º card lado a lado */}
           {slot === 'primary' && (
             <div className="relative">
               <button
@@ -798,7 +1038,7 @@ export function KnowledgeCardEditorPane({
                   setWikiQuery('');
                   setOpenMenu(openMenu === 'splitpicker' ? null : 'splitpicker');
                 }}
-                className={`flex items-center gap-1 rounded-xl border px-2.5 py-1.5 text-xs font-medium transition ${
+                className={`flex items-center gap-1 rounded-xl border px-2 py-1.5 text-xs font-medium transition ${
                   isSplitActive
                     ? 'border-indigo-500/50 bg-indigo-600/20 text-indigo-200'
                     : 'border-zinc-800 bg-[#0F1115] text-zinc-300 hover:border-zinc-700 hover:text-white'
@@ -806,7 +1046,9 @@ export function KnowledgeCardEditorPane({
                 title="Abrir outro card lado a lado (Split View)"
               >
                 <Columns2 className="h-3.5 w-3.5" />
-                <span className="hidden md:inline">Lado a Lado</span>
+                <span className={dockToolbarInHeader ? 'hidden 2xl:inline' : 'hidden md:inline'}>
+                  Lado a Lado
+                </span>
               </button>
 
               {openMenu === 'splitpicker' && (
@@ -851,12 +1093,11 @@ export function KnowledgeCardEditorPane({
             </div>
           )}
 
-          {/* Alternar entre Tela Ampliada e Painel Lateral (vendo o Canvas ao lado) */}
           {slot === 'primary' && onToggleExpand && (
             <button
               type="button"
               onClick={onToggleExpand}
-              className="flex items-center gap-1 rounded-xl border border-zinc-800 bg-[#0F1115] px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition hover:border-zinc-700 hover:text-white"
+              className="flex items-center gap-1 rounded-xl border border-zinc-800 bg-[#0F1115] px-2 py-1.5 text-xs font-medium text-zinc-300 transition hover:border-zinc-700 hover:text-white"
               title={
                 isExpanded
                   ? 'Alternar para painel lateral (ver o Canvas ao lado)'
@@ -864,11 +1105,12 @@ export function KnowledgeCardEditorPane({
               }
             >
               {isExpanded ? <PanelRight className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-              <span className="hidden xl:inline">{isExpanded ? 'Lateral' : 'Ampliar'}</span>
+              <span className={dockToolbarInHeader ? 'hidden 2xl:inline' : 'hidden xl:inline'}>
+                {isExpanded ? 'Lateral' : 'Ampliar'}
+              </span>
             </button>
           )}
 
-          {/* Alternar Inspetor lateral de Propriedades */}
           <button
             type="button"
             onClick={() => setShowInspector((v) => !v)}
@@ -882,22 +1124,20 @@ export function KnowledgeCardEditorPane({
             <SlidersHorizontal className="h-4 w-4" />
           </button>
 
-          {/* Fechar */}
           <button
             type="button"
             onClick={onClose}
-            className="flex items-center gap-1 rounded-xl border border-zinc-800 bg-[#0F1115] px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-200"
+            className="flex items-center gap-1 rounded-xl border border-zinc-800 bg-[#0F1115] px-2 py-1.5 text-xs font-medium text-zinc-300 transition hover:border-rose-500/40 hover:bg-rose-500/10 hover:text-rose-200"
             title="Fechar editor (Esc)"
           >
             <X className="h-4 w-4" />
-            <span className="hidden sm:inline">Fechar</span>
+            <span className={dockToolbarInHeader ? 'hidden 2xl:inline' : 'hidden sm:inline'}>Fechar</span>
           </button>
         </div>
       </header>
 
       {/* CORPO EM DUAS COLUNAS RESPONSIVAS: CONTEÚDO + INSPETOR */}
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        {/* COLUNA PRINCIPAL: CONTEÚDO */}
         <div
           className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-10"
           onClick={() => {
@@ -905,8 +1145,7 @@ export function KnowledgeCardEditorPane({
             if (triggerMenu) setTriggerMenu(null);
           }}
         >
-          <div className="mx-auto max-w-3xl">
-            {/* Título editável */}
+          <div className="mx-auto max-w-4xl">
             <input
               value={titleDraft}
               onChange={(e) => {
@@ -917,194 +1156,19 @@ export function KnowledgeCardEditorPane({
               placeholder="Título do Knowledge Card"
             />
 
-            {/* Prévia fiel da Observação / Pegadinha quando visível */}
             {callout.visible !== false && (callout.text ?? '').trim().length > 0 && (
               <CalloutBadge config={callout} theme={theme} className="mb-4" />
             )}
 
-            {/* TOOLBAR RICA FIXA */}
-            {editor && (
-              <div
-                onClick={(e) => e.stopPropagation()}
-                className="sticky top-0 z-20 mb-5 flex flex-wrap items-center gap-1 rounded-xl border border-zinc-800/90 bg-[#181C24]/95 p-1.5 shadow-lg backdrop-blur-md"
-              >
-                {[1, 2, 3].map((lvl) => (
-                  <button
-                    key={lvl}
-                    type="button"
-                    onClick={() =>
-                      editor.chain().focus().toggleHeading({ level: lvl as 1 | 2 | 3 }).run()
-                    }
-                    className={`rounded-lg px-2 py-1 text-[11px] font-bold transition ${
-                      editor.isActive('heading', { level: lvl })
-                        ? 'bg-indigo-600 text-white'
-                        : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'
-                    }`}
-                  >
-                    H{lvl}
-                  </button>
-                ))}
+            {/* Nos modos Lateral, Lado a Lado ou telas menores, a barra fica logo abaixo do título em 1 linha limpa */}
+            {!dockToolbarInHeader && renderFormattingToolbar(false)}
 
-                <div className="mx-0.5 h-4 w-px bg-zinc-800" />
-
-                <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={`rounded-lg p-1.5 ${editor.isActive('bold') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Negrito (Ctrl+B)"><Bold className="h-3.5 w-3.5" /></button>
-                <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={`rounded-lg p-1.5 ${editor.isActive('italic') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Itálico (Ctrl+I)"><Italic className="h-3.5 w-3.5" /></button>
-                <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={`rounded-lg p-1.5 ${editor.isActive('underline') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Sublinhado (Ctrl+U)"><UnderlineIcon className="h-3.5 w-3.5" /></button>
-
-                <div className="relative">
-                  <button type="button" onClick={() => setOpenMenu(openMenu === 'color' ? null : 'color')} className="rounded-lg p-1.5 text-zinc-300 hover:bg-zinc-800" title="Cor do texto">
-                    <Palette className="h-3.5 w-3.5" />
-                  </button>
-                  {openMenu === 'color' && (
-                    <div className="absolute left-0 top-full z-30 mt-2 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
-                      {TEXT_COLORS.map((hex) => (
-                        <button key={hex} type="button" onClick={() => { editor.chain().focus().setColor(hex).run(); setOpenMenu(null); }} className="h-4 w-4 rounded-full border border-zinc-700 hover:scale-125" style={{ backgroundColor: hex }} />
-                      ))}
-                      <button type="button" onClick={() => { editor.chain().focus().unsetColor().run(); setOpenMenu(null); }} className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">Reset</button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="relative">
-                  <button type="button" onClick={() => setOpenMenu(openMenu === 'highlight' ? null : 'highlight')} className={`rounded-lg p-1.5 ${editor.isActive('highlight') ? 'bg-amber-500/20 text-amber-300' : 'text-amber-300 hover:bg-zinc-800'}`} title="Marca-texto">
-                    <Highlighter className="h-3.5 w-3.5" />
-                  </button>
-                  {openMenu === 'highlight' && (
-                    <div className="absolute left-0 top-full z-30 mt-2 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
-                      {HIGHLIGHT_COLORS.map((hex) => (
-                        <button key={hex} type="button" onClick={() => { editor.chain().focus().toggleHighlight({ color: hex }).run(); setOpenMenu(null); }} className="h-4 w-4 rounded border border-zinc-700 hover:scale-125" style={{ backgroundColor: hex }} />
-                      ))}
-                      <button type="button" onClick={() => { editor.chain().focus().unsetHighlight().run(); setOpenMenu(null); }} className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">Limpar</button>
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => editor.chain().focus().toggleMark('studyTape').run()}
-                  className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold transition ${
-                    editor.isActive('studyTape')
-                      ? 'bg-amber-500 text-zinc-950'
-                      : 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
-                  }`}
-                  title="Fita de ocultação para memorização ativa"
-                >
-                  <EyeOff className="h-3 w-3" /> Fita
-                </button>
-
-                <div className="mx-0.5 h-4 w-px bg-zinc-800" />
-
-                <button type="button" onClick={() => editor.chain().focus().setTextAlign('left').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Alinhar à esquerda"><AlignLeft className="h-3.5 w-3.5" /></button>
-                <button type="button" onClick={() => editor.chain().focus().setTextAlign('center').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Centralizar"><AlignCenter className="h-3.5 w-3.5" /></button>
-                <button type="button" onClick={() => editor.chain().focus().setTextAlign('right').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Alinhar à direita"><AlignRight className="h-3.5 w-3.5" /></button>
-
-                <div className="mx-0.5 h-4 w-px bg-zinc-800" />
-
-                <button type="button" onClick={() => editor.chain().focus().toggleBulletList().run()} className={`rounded-lg p-1.5 ${editor.isActive('bulletList') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Lista"><List className="h-3.5 w-3.5" /></button>
-                <button type="button" onClick={() => editor.chain().focus().toggleOrderedList().run()} className={`rounded-lg p-1.5 ${editor.isActive('orderedList') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Lista numerada"><ListOrdered className="h-3.5 w-3.5" /></button>
-                <button type="button" onClick={() => editor.chain().focus().toggleTaskList().run()} className={`rounded-lg p-1.5 ${editor.isActive('taskList') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Checklist"><CheckSquare className="h-3.5 w-3.5" /></button>
-                <button type="button" onClick={() => editor.chain().focus().toggleBlockquote().run()} className={`rounded-lg p-1.5 ${editor.isActive('blockquote') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Citação / Lei Seca"><Quote className="h-3.5 w-3.5" /></button>
-                <button type="button" onClick={() => editor.chain().focus().toggleCodeBlock().run()} className={`rounded-lg p-1.5 ${editor.isActive('codeBlock') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Código"><Code2 className="h-3.5 w-3.5" /></button>
-
-                <div className="relative">
-                  <button type="button" onClick={() => setOpenMenu(openMenu === 'table' ? null : 'table')} className={`rounded-lg p-1.5 ${editor.isActive('table') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Tabela">
-                    <TableIcon className="h-3.5 w-3.5" />
-                  </button>
-                  {openMenu === 'table' && (
-                    <div className="absolute left-0 top-full z-30 mt-2 flex w-48 flex-col gap-0.5 rounded-xl border border-zinc-800 bg-[#161920] p-1.5 text-xs shadow-2xl">
-                      <button type="button" onClick={() => { editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left font-medium text-indigo-300 hover:bg-zinc-800">Inserir Tabela (3×3)</button>
-                      <button type="button" onClick={() => { editor.chain().focus().addColumnAfter().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-300 hover:bg-zinc-800">+ Coluna à direita</button>
-                      <button type="button" onClick={() => { editor.chain().focus().addRowAfter().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-300 hover:bg-zinc-800">+ Linha abaixo</button>
-                      <button type="button" onClick={() => { editor.chain().focus().deleteColumn().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-400 hover:bg-zinc-800">- Remover coluna</button>
-                      <button type="button" onClick={() => { editor.chain().focus().deleteRow().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-400 hover:bg-zinc-800">- Remover linha</button>
-                      <div className="my-1 h-px bg-zinc-800" />
-                      <button type="button" onClick={() => { editor.chain().focus().deleteTable().run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-rose-400 hover:bg-rose-500/15">Excluir tabela</button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="relative">
-                  <button type="button" onClick={() => setOpenMenu(openMenu === 'hr' ? null : 'hr')} className="rounded-lg p-1.5 text-zinc-300 hover:bg-zinc-800" title="Divisória">
-                    <Minus className="h-3.5 w-3.5" />
-                  </button>
-                  {openMenu === 'hr' && (
-                    <div className="absolute left-0 top-full z-30 mt-2 flex w-40 flex-col gap-1 rounded-xl border border-zinc-800 bg-[#161920] p-1.5 text-xs shadow-2xl">
-                      <button type="button" onClick={() => { editor.chain().focus().insertContent({ type: 'horizontalRule', attrs: { class: 'kc-hr-solid' } }).run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-200 hover:bg-zinc-800">Linha Contínua</button>
-                      <button type="button" onClick={() => { editor.chain().focus().insertContent({ type: 'horizontalRule', attrs: { class: 'kc-hr-dashed' } }).run(); setOpenMenu(null); }} className="rounded-lg px-2.5 py-1.5 text-left text-zinc-200 hover:bg-zinc-800">Linha Tracejada</button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="mx-0.5 h-4 w-px bg-zinc-800" />
-
-                <button type="button" onClick={() => editor.chain().focus().insertContent({ type: 'mathBlock', attrs: { latex: '' } }).run()} className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-indigo-300 hover:bg-indigo-500/15" title="Fórmula KaTeX">
-                  <Sigma className="h-3.5 w-3.5" /> Fórmula
-                </button>
-                <button type="button" onClick={() => editor.chain().focus().insertContent({ type: 'mermaidBlock' }).run()} className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/15" title="Diagrama Mermaid">
-                  <GitFork className="h-3.5 w-3.5" /> Diagrama
-                </button>
-
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setWikiQuery('');
-                      setOpenMenu(openMenu === 'wikilink' ? null : 'wikilink');
-                    }}
-                    className="flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-sky-300 hover:bg-sky-500/15"
-                  >
-                    <Link2 className="h-3.5 w-3.5" /> [[Link]]
-                  </button>
-                  {openMenu === 'wikilink' && (
-                    <div className="absolute right-0 top-full z-30 mt-2 w-64 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
-                      <input
-                        autoFocus
-                        value={wikiQuery}
-                        onChange={(e) => setWikiQuery(e.target.value)}
-                        placeholder="Buscar card para conectar..."
-                        className="mb-2 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100 focus:border-indigo-500 focus:outline-none"
-                      />
-                      <div className="max-h-48 space-y-0.5 overflow-y-auto">
-                        {otherCards.map((target) => (
-                          <button
-                            key={target.id}
-                            type="button"
-                            onClick={() => {
-                              editor
-                                .chain()
-                                .focus()
-                                .insertContent({
-                                  type: 'wikiLink',
-                                  attrs: { cardId: target.id, label: target.title },
-                                })
-                                .run();
-                              setOpenMenu(null);
-                            }}
-                            className="block w-full truncate rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-200 hover:bg-indigo-600/20 hover:text-indigo-200"
-                          >
-                            {target.title}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <label className="flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-medium text-zinc-300 hover:bg-zinc-800">
-                  <Paperclip className="h-3.5 w-3.5" /> Mídia
-                  <input type="file" accept="image/*,application/pdf,audio/*" className="hidden" onChange={handleAttachFile} />
-                </label>
-              </div>
-            )}
-
-            {/* ÁREA DE ESCRITA COM TIPOGRAFIA PERSONALIZADA EM TEMPO REAL */}
             <div style={typoStyle}>
               <EditorContent editor={editor} />
             </div>
           </div>
         </div>
 
-        {/* COLUNA LATERAL DE GRUPOS (APARÊNCIA, TIPOGRAFIA, DESTAQUES, ESTUDO, CONEXÕES, METADADOS E AÇÕES) */}
         {showInspector && (
           <EditorInspectorPanel
             fullCard={fullCard}

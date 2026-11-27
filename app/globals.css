@@ -850,3 +850,8 @@ html.paper {
   text-decoration-thickness: 2px;
   text-underline-offset: 4px;
 }
+
+/* Preserva fonte inline escolhida por trecho dentro de Cards, Textos e Modo Livro */
+.ProseMirror [data-study-font] {
+  font-family: inherit;
+}

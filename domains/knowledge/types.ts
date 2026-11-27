@@ -44,6 +44,18 @@ export interface TextTypographyConfig {
   effectColor?: string;
 }
 
+export interface CardTitleStyle {
+  fontFamily?: StudyFontId;
+  fontSize?: number;
+  color?: string;
+  textAlign?: 'left' | 'center' | 'right';
+  textEffect?: TextEffectId;
+  effectColor?: string;
+  fontWeight?: 'normal' | 'semibold' | 'bold';
+  italic?: boolean;
+  underline?: boolean;
+}
+
 /** Observação Rápida / Pegadinha da Banca personalizável */
 export type CalloutPreset =
   | 'highlight'
@@ -80,15 +92,20 @@ export type TopicShape =
   | 'ellipse'
   | 'diamond'
   | 'capsule'
-  | 'hexagon';
+  | 'hexagon'
+  | 'cloud'
+  | 'banner'
+  | 'speech'
+  | 'sticky-tape';
 
 export interface TopicNodeConfig {
   shape: TopicShape;
   shadow?: 'none' | 'sm' | 'md' | 'glow';
   icon?: string;
+  doubleBorder?: boolean;
   parentTopicId?: string | null;
   defaultEdgeStyle?: {
-    edgeType?: 'smoothstep' | 'default' | 'straight';
+    edgeType?: CanvasEdgePathType;
     color?: string;
     lineStyle?: EdgeLineStyle;
   };
@@ -101,7 +118,8 @@ export interface EdgeWaypoint {
 }
 
 export type EdgeLineStyle = 'solid' | 'dashed' | 'dotted';
-export type EdgeArrowType = 'none' | 'arrow' | 'arrowclosed' | 'dot';
+export type EdgeArrowType = 'none' | 'arrow' | 'arrowclosed' | 'dot' | 'hand';
+export type CanvasEdgePathType = 'smoothstep' | 'default' | 'straight' | 'organic';
 
 /** Configuração editorial do Modo Livro (separada das coordenadas X/Y do Canvas) */
 export type BookItemRole = 'chapter' | 'section' | 'content';
@@ -174,6 +192,7 @@ export interface LocalAttachment {
  * Metadados leves do Card (carregados em listas, canvas e filtros para 100k+ notas)
  */
 export interface KnowledgeCardMeta extends SyncableEntity {
+  titleStyle?: CardTitleStyle;
   workspaceId: string;
   disciplineId: string;
   subjectId: string;
@@ -261,6 +280,7 @@ export interface CanvasNodePosition extends SyncableEntity, HierarchyScope {
   cropX?: number;
   cropY?: number;
   borderRadius?: 'none' | 'md' | 'xl' | 'full';
+  sketch?: boolean;
   x: number;
   y: number;
   width: number;
@@ -274,6 +294,9 @@ export interface EdgeLabelStyle {
   borderColor?: string;
   borderStyle?: 'solid' | 'dashed' | 'none';
   fontSize?: number;
+  fontFamily?: StudyFontId;
+  textEffect?: TextEffectId;
+  effectColor?: string;
   fontWeight?: 'normal' | 'medium' | 'bold';
   textAlign?: 'left' | 'center' | 'right';
   rotation?: number;    // Ângulo manual em graus (-180 a 180)
@@ -288,7 +311,7 @@ export interface CanvasConnection extends SyncableEntity {
   targetNodeId: string;
   sourceHandle?: string;
   targetHandle?: string;
-  edgeType?: 'smoothstep' | 'default' | 'straight';
+  edgeType?: CanvasEdgePathType;
   routingMode?: 'auto' | 'manual';
   waypoints?: EdgeWaypoint[];
   strokeWidth?: number;

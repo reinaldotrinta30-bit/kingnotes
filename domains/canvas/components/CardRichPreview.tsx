@@ -174,6 +174,18 @@ function renderMarks(text: string, marks?: TipTapMark[]): React.ReactNode {
         );
         break;
       }
+      case 'studyFont': {
+        const fontId = mark.attrs?.fontId as Parameters<typeof getFontFamilyCss>[0];
+        const fam = getFontFamilyCss(fontId);
+        if (fam !== 'inherit') {
+          node = (
+            <span data-study-font={fontId} style={{ fontFamily: fam }}>
+              {node}
+            </span>
+          );
+        }
+        break;
+      }
     }
     
   }

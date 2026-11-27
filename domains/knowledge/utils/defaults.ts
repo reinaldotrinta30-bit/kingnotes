@@ -3,6 +3,7 @@ import {
   CardCalloutConfig,
   KnowledgeCardMeta,
   TextTypographyConfig,
+  CardTitleStyle,
 } from '../types';
 
 export const TYPOGRAPHY_LIMITS = {
@@ -108,4 +109,37 @@ export function resolveCardCallout(
 
 export function resolveEdgeStrokeWidth(edge: Pick<CanvasConnection, 'strokeWidth'>): number {
   return clampNumber(edge.strokeWidth ?? 1.75, 1, 8, 1.75);
+}
+
+export const DEFAULT_CARD_TITLE_STYLE: Required<Omit<CardTitleStyle, 'color'>> & {
+  color: string;
+} = {
+  fontFamily: 'default',
+  fontSize: 15,
+  color: '',
+  textAlign: 'left',
+  textEffect: 'none',
+  effectColor: '#0f172a',
+  fontWeight: 'bold',
+  italic: false,
+  underline: false,
+};
+
+export function resolveCardTitleStyle(meta?: {
+  titleStyle?: CardTitleStyle;
+  typography?: TextTypographyConfig;
+}): Required<Omit<CardTitleStyle, 'color'>> & { color: string } {
+  const ts = meta?.titleStyle;
+  return {
+    fontFamily: ts?.fontFamily ?? meta?.typography?.fontFamily ?? DEFAULT_CARD_TITLE_STYLE.fontFamily,
+    fontSize: Math.max(12, Math.min(44, Math.round(ts?.fontSize ?? DEFAULT_CARD_TITLE_STYLE.fontSize))),
+    color: ts?.color ?? '',
+    textAlign: ts?.textAlign ?? DEFAULT_CARD_TITLE_STYLE.textAlign,
+    textEffect: ts?.textEffect ?? meta?.typography?.textEffect ?? DEFAULT_CARD_TITLE_STYLE.textEffect,
+    effectColor:
+      ts?.effectColor ?? meta?.typography?.effectColor ?? DEFAULT_CARD_TITLE_STYLE.effectColor,
+    fontWeight: ts?.fontWeight ?? DEFAULT_CARD_TITLE_STYLE.fontWeight,
+    italic: ts?.italic ?? DEFAULT_CARD_TITLE_STYLE.italic,
+    underline: ts?.underline ?? DEFAULT_CARD_TITLE_STYLE.underline,
+  };
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { memo, useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useId, useRef, useState } from 'react';
 import { Handle, Position, NodeProps, NodeResizer, useUpdateNodeInternals } from '@xyflow/react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -14,6 +14,8 @@ import TaskItem from '@tiptap/extension-task-item';
 import { StudyUnderlineMark } from '@/domains/knowledge/extensions/StudyUnderlineMark';
 import { StudyUnderlinePicker } from './StudyUnderlinePicker';
 import { getFontFamilyCss, getTextEffectClass } from '../utils/studyFonts';
+import { StudyFontMark } from '@/domains/knowledge/extensions/StudyFontMark';
+import { StudyFontPicker } from '@/domains/canvas/components/StudyFontPicker';
 import {
   Bold,
   Italic,
@@ -128,6 +130,7 @@ function FreeTextInlineEditor({
       TaskItem.configure({ nested: true }),
       StudyTapeMark,
       StudyUnderlineMark,
+      StudyFontMark,
     ],
     content: node.textJson ?? { type: 'doc', content: [{ type: 'paragraph' }] },
     editorProps: {
@@ -222,6 +225,7 @@ function FreeTextInlineEditor({
         <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={btn(editor.isActive('italic'))} title="Itálico (Ctrl+I)"><Italic className="h-3.5 w-3.5" /></button>
         <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={btn(editor.isActive('underline'))} title="Sublinhado (Ctrl+U)"><UnderlineIcon className="h-3.5 w-3.5" /></button>
         <StudyUnderlinePicker editor={editor} />
+        <StudyFontPicker editor={editor} />
         <button type="button" onClick={() => editor.chain().focus().toggleStrike().run()} className={btn(editor.isActive('strike'))} title="Tachado"><Strikethrough className="h-3.5 w-3.5" /></button>
 
         {/* Tipografia completa em tempo real */}
@@ -359,6 +363,8 @@ export const CanvasTextNode = memo(function CanvasTextNode({
   const updateCanvasNode = useKnowledgeStore((s) => s.updateCanvasNode);
   const { theme, editingTextNodeId, setEditingTextNodeId } = useUiStore();
   const { node } = data;
+  const sketchUid = useId().replace(/:/g, '');
+  const isSketch = Boolean(node.sketch);
 
   const isEditing = editingTextNodeId === id;
   const resolvedTypo = resolveTypography(node.typography, DEFAULT_TEXT_TYPOGRAPHY, node.fontSize);
@@ -470,6 +476,52 @@ export const CanvasTextNode = memo(function CanvasTextNode({
           </React.Fragment>
         ))}
 
+      {isSketch && (
+        <svg
+          viewBox="0 0 200 120"
+          preserveAspectRatio="none"
+          className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+        >
+          <defs>
+            <filter id={`kc-txtsk-${sketchUid}`} x="-6%" y="-6%" width="112%" height="112%">
+              <feTurbulence
+                type="fractalNoise"
+                baseFrequency="0.032"
+                numOctaves="2"
+                seed="11"
+                result="noise"
+              />
+              <feDisplacementMap
+                in="SourceGraphic"
+                in2="noise"
+                scale="2.1"
+                xChannelSelector="R"
+                yChannelSelector="G"
+              />
+            </filter>
+          </defs>
+          <rect
+            x="3"
+            y="3"
+            width="194"
+            height="114"
+            rx={node.borderRadius === 'none' ? 0 : node.borderRadius === 'md' ? 8 : 16}
+            fill={bgStyleColor}
+            stroke={
+              borderStyle === 'none'
+                ? 'transparent'
+                : hexToRgba(borderColor, selected ? 0.92 : 0.72)
+            }
+            strokeWidth={borderWidth || 2}
+            strokeDasharray={
+              borderStyle === 'dashed' ? '7 5' : borderStyle === 'dotted' ? '2 4' : undefined
+            }
+            vectorEffect="non-scaling-stroke"
+            filter={`url(#kc-txtsk-${sketchUid})`}
+          />
+        </svg>
+      )}
+
       <div
         onDoubleClick={(e) => {
           e.stopPropagation();
@@ -480,19 +532,21 @@ export const CanvasTextNode = memo(function CanvasTextNode({
           fontFamily: getFontFamilyCss(resolvedTypo.fontFamily),
           ['--kc-fx-color' as string]: resolvedTypo.effectColor,
           ['--kc-fx-start' as string]: node.textColor || defaultTextColor,
-          backgroundColor: bgStyleColor,
-          borderWidth,
+          backgroundColor: isSketch ? 'transparent' : bgStyleColor,
+          borderWidth: isSketch ? 0 : borderWidth,
           borderStyle: borderStyle === 'none' ? 'solid' : borderStyle,
           borderColor:
-            borderStyle === 'none' ? 'transparent' : hexToRgba(borderColor, selected ? 0.9 : 0.55),
+            isSketch || borderStyle === 'none'
+              ? 'transparent'
+              : hexToRgba(borderColor, selected ? 0.9 : 0.55),
           color: node.textColor || defaultTextColor,
           fontSize: `${resolvedTypo.fontSize}px`,
           lineHeight: resolvedTypo.lineHeight,
           textAlign: node.textAlign ?? 'left',
           minHeight: node.height && node.height > 0 ? node.height : undefined,
         }}
-        className={`w-full ${radiusClass} ${paddingClass} transition-colors ${
-          bgOpacity !== 'transparent' ? 'backdrop-blur-sm shadow-lg' : ''
+        className={`relative z-10 w-full ${radiusClass} ${paddingClass} transition-colors ${
+          !isSketch && bgOpacity !== 'transparent' ? 'backdrop-blur-sm shadow-lg' : ''
         }`}
       >
         {!isEditing && hasCallout && (calloutPos === 'top' || calloutPos === 'badge') && (

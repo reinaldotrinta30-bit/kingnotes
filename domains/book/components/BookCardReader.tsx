@@ -31,6 +31,9 @@ import { StudyTapeMark } from '@/domains/knowledge/extensions/StudyTapeMark';
 import { StudyUnderlineMark } from '@/domains/knowledge/extensions/StudyUnderlineMark';
 import { buildTypographyCssVars } from '@/domains/canvas/components/CardRichPreview';
 import { CalloutBadge } from '@/domains/canvas/components/CalloutBadge';
+import { resolveCardTitleStyle } from '@/domains/knowledge/utils/defaults';
+import { StudyFontMark } from '@/domains/knowledge/extensions/StudyFontMark';
+import { getFontFamilyCss, getTextEffectClass } from '@/domains/canvas/utils/studyFonts';
 
 const lowlight = createLowlight(common);
 
@@ -126,6 +129,7 @@ export function BookCardReader({
       Highlight.configure({ multicolor: true }),
       StudyTapeMark,
       StudyUnderlineMark,
+      StudyFontMark,
       TaskList,
       TaskItem.configure({ nested: true }),
       Table.configure({ resizable: false }),
@@ -189,6 +193,7 @@ export function BookCardReader({
   const hasVisibleCallout =
     showCallouts && Boolean((callout.text ?? '').trim()) && callout.visible !== false;
   const typoStyle = buildTypographyCssVars(card.typography, DEFAULT_CARD_TYPOGRAPHY);
+  const titleStyle = resolveCardTitleStyle(card);
 
   return (
     <article
@@ -213,12 +218,17 @@ export function BookCardReader({
           <div className="flex items-center gap-2">
             {card.emoji && <span className="text-lg">{card.emoji}</span>}
             <h3
-              className={`text-lg font-semibold tracking-tight ${
-                effectiveTheme === 'paper' ? 'text-zinc-900' : 'text-zinc-100'
-              }`}
-            >
-              {card.title}
-            </h3>
+  className={`text-lg font-semibold tracking-tight ${
+    effectiveTheme === 'paper' ? 'text-zinc-900' : 'text-zinc-100'
+  } ${getTextEffectClass(titleStyle.textEffect)}`}
+  style={{
+    fontFamily: getFontFamilyCss(titleStyle.fontFamily),
+    fontStyle: titleStyle.italic ? 'italic' : 'normal',
+    textDecoration: titleStyle.underline ? 'underline' : 'none',
+  }}
+>
+  {card.title}
+</h3>
           </div>
 
           <div className="kc-no-print flex shrink-0 items-center gap-1.5">

@@ -20,6 +20,10 @@ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import Image from '@tiptap/extension-image';
 import { common, createLowlight } from 'lowlight';
 import { StudyUnderlinePicker } from './StudyUnderlinePicker';
+import { StudyFontPicker } from '@/domains/canvas/components/StudyFontPicker';
+import { StudyFontMark } from '@/domains/knowledge/extensions/StudyFontMark';
+
+
 import {
   Bold,
   Italic,
@@ -38,7 +42,7 @@ import {
   Palette,
 } from 'lucide-react';
 import { FullKnowledgeCard } from '@/domains/knowledge/types';
-import { DEFAULT_CARD_TYPOGRAPHY, resolveCardCallout } from '@/domains/knowledge/utils/defaults';
+import { DEFAULT_CARD_TYPOGRAPHY, resolveCardCallout, resolveCardTitleStyle } from '@/domains/knowledge/utils/defaults';
 import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryFactory';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
 import { useUiStore } from '@/domains/ui/store/useUiStore';
@@ -50,6 +54,9 @@ import { StudyUnderlineMark } from '@/domains/knowledge/extensions/StudyUnderlin
 import { buildTypographyCssVars, setCardPreviewCache } from './CardRichPreview';
 import { TypographyPopover } from './TypographyPopover';
 import { CalloutCustomizerPopover } from './CalloutCustomizerPopover';
+import { getFontFamilyCss, getTextEffectClass } from '../utils/studyFonts';
+
+
 
 const lowlight = createLowlight(common);
 
@@ -160,6 +167,7 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
       Highlight.configure({ multicolor: true }),
       StudyTapeMark,
       StudyUnderlineMark,
+      StudyFontMark,
       TaskList,
       TaskItem.configure({ nested: true }),
       Table.configure({ resizable: true }),
@@ -244,6 +252,7 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
 
   const typoStyle = buildTypographyCssVars(meta.typography, DEFAULT_CARD_TYPOGRAPHY);
   const calloutConfig = resolveCardCallout(meta);
+  const titleStyle = resolveCardTitleStyle(meta);
 
   const handleAddTag = () => {
     const clean = newTag
@@ -302,6 +311,7 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
           <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={`rounded-lg p-1.5 ${editor.isActive('italic') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Itálico"><Italic className="h-3.5 w-3.5" /></button>
           <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={`rounded-lg p-1.5 ${editor.isActive('underline') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Sublinhado"><UnderlineIcon className="h-3.5 w-3.5" /></button>
           <StudyUnderlinePicker editor={editor} />
+          <StudyFontPicker editor={editor} />
 
           {/* Tipografia (Fonte, Entrelinha e Parágrafos) */}
           <TypographyPopover
@@ -310,6 +320,9 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
             defaults={DEFAULT_CARD_TYPOGRAPHY}
             onChange={(next) => updateCardMeta(cardId, { typography: next })}
             onReset={() => updateCardMeta(cardId, { typography: undefined })}
+            titleStyle={meta.titleStyle}
+            onTitleStyleChange={(next) => updateCardMeta(cardId, { titleStyle: next })}
+            onTitleStyleReset={() => updateCardMeta(cardId, { titleStyle: undefined })}
           />
 
           {/* Marca-texto */}
@@ -431,7 +444,19 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
         value={meta.title}
         onChange={(e) => updateCardMeta(cardId, { title: e.target.value })}
         placeholder="Título do Card..."
-        className="mb-1.5 w-full bg-transparent text-[15px] font-bold tracking-tight text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
+        style={{
+          fontFamily: getFontFamilyCss(titleStyle.fontFamily),
+          fontSize: `${titleStyle.fontSize}px`,
+          color: titleStyle.color || undefined,
+          textAlign: titleStyle.textAlign,
+          fontStyle: titleStyle.italic ? 'italic' : 'normal',
+          textDecoration: titleStyle.underline ? 'underline' : 'none',
+          ['--kc-fx-color' as string]: titleStyle.effectColor,
+          ['--kc-fx-start' as string]: titleStyle.color || '#f4f4f5',
+        }}
+        className={`mb-1.5 w-full bg-transparent font-bold tracking-tight text-zinc-100 placeholder:text-zinc-500 focus:outline-none ${getTextEffectClass(
+          titleStyle.textEffect
+        )}`}
       />
 
       {/* CONTEÚDO RICO COM TIPOGRAFIA EM TEMPO REAL */}

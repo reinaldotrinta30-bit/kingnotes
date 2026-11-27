@@ -12,6 +12,7 @@ import {
 } from '@xyflow/react';
 import { Tag, X, RotateCw } from 'lucide-react';
 import {
+  CanvasEdgePathType,
   EdgeArrowType,
   EdgeLabelStyle,
   EdgeLineStyle,
@@ -20,9 +21,10 @@ import {
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
 import { useUiStore } from '@/domains/ui/store/useUiStore';
 import { hexToRgbaString } from '../utils/contrast';
+import { getFontFamilyCss, getTextEffectClass } from '../utils/studyFonts';
 
 interface EditableEdgeData {
-  pathStyle?: 'smoothstep' | 'default' | 'straight';
+  pathStyle?: CanvasEdgePathType;
   edgeStyle?: 'solid' | 'dashed' | 'animated';
   lineStyle?: EdgeLineStyle;
   strokeWidth?: number;
@@ -218,7 +220,7 @@ function simplifyOrthogonalPolyline(pts: Pt[]): Pt[] {
 
 function buildPolylinePath(
   pts: Pt[],
-  pathStyle: 'smoothstep' | 'default' | 'straight'
+  pathStyle: CanvasEdgePathType
 ): string {
   if (pts.length < 2) return '';
 
@@ -226,7 +228,7 @@ function buildPolylinePath(
     return pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
   }
 
-  if (pathStyle === 'default') {
+  if (pathStyle === 'default' || pathStyle === 'organic') {
     if (pts.length === 2) {
       return `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)} L ${pts[1].x.toFixed(1)} ${pts[1].y.toFixed(1)}`;
     }
@@ -418,6 +420,41 @@ function projectPointToProgress(pts: Pt[], target: Pt): number {
   return Math.round(Math.max(0.08, Math.min(0.92, bestArcLen / total)) * 1000) / 1000;
 }
 
+function buildOrganicAutoPath(
+  sx: number,
+  sy: number,
+  sPos: Position,
+  tx: number,
+  ty: number,
+  tPos: Position
+): string {
+  const sd = dirOf(sPos);
+  const td = dirOf(tPos);
+  const dx = tx - sx;
+  const dy = ty - sy;
+  const dist = Math.hypot(dx, dy);
+  const tension = Math.min(115, Math.max(38, dist * 0.36));
+
+  let cp1x = sx + sd.x * tension;
+  let cp1y = sy + sd.y * tension;
+  let cp2x = tx + td.x * tension;
+  let cp2y = ty + td.y * tension;
+
+  const nearlyHorizontal = Math.abs(dy) < 28 && sd.x !== 0 && td.x !== 0;
+  const nearlyVertical = Math.abs(dx) < 28 && sd.y !== 0 && td.y !== 0;
+  if (nearlyHorizontal) {
+    const bow = Math.min(30, Math.max(14, dist * 0.12));
+    cp1y -= bow;
+    cp2y -= bow * 0.55;
+  } else if (nearlyVertical) {
+    const bow = Math.min(30, Math.max(14, dist * 0.12));
+    cp1x += bow;
+    cp2x += bow * 0.55;
+  }
+
+  return `M ${sx.toFixed(1)},${sy.toFixed(1)} C ${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${tx.toFixed(1)},${ty.toFixed(1)}`;
+}
+
 function renderSvgMarker(markerId: string, type: EdgeArrowType, color: string) {
   if (type === 'none') return null;
 
@@ -453,6 +490,29 @@ function renderSvgMarker(markerId: string, type: EdgeArrowType, color: string) {
           fill="none"
           stroke={color}
           strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </marker>
+    );
+  }
+
+  if (type === 'hand') {
+    return (
+      <marker
+        id={markerId}
+        viewBox="0 0 16 16"
+        refX="12.5"
+        refY="8"
+        markerWidth="9.5"
+        markerHeight="9.5"
+        orient="auto-start-reverse"
+      >
+        <path
+          d="M 3 3.2 Q 7.8 6.4 13.2 8 Q 7.8 9.8 3.4 12.8"
+          fill="none"
+          stroke={color}
+          strokeWidth="2.2"
           strokeLinecap="round"
           strokeLinejoin="round"
         />
@@ -701,7 +761,24 @@ export function EditableEdge({
       return {
         edgePath: buildPolylinePath(fullPolyline, pathStyle),
         sampledPoints:
-          pathStyle === 'default' ? sampleManualCurvePoints(fullPolyline) : fullPolyline,
+          pathStyle === 'default' || pathStyle === 'organic'
+            ? sampleManualCurvePoints(fullPolyline)
+            : fullPolyline,
+      };
+    }
+
+    if (pathStyle === 'organic') {
+      const path = buildOrganicAutoPath(
+        sourceX,
+        sourceY,
+        sourcePosition,
+        targetX,
+        targetY,
+        targetPosition
+      );
+      return {
+        edgePath: path,
+        sampledPoints: parseAutoBezierToSamples(path, fullPolyline),
       };
     }
 
@@ -1221,10 +1298,30 @@ export function EditableEdge({
 
   const addIconX = labelAnchor.x + (labelAnchor.isHoriz ? 0 : 15);
   const addIconY = labelAnchor.y + (labelAnchor.isHoriz ? -15 : 0);
+  const isOrganic = pathStyle === 'organic';
+  const organicFilterId = `kc-eof-${uid}`;
 
   return (
     <>
       <defs>
+        {isOrganic && (
+          <filter id={organicFilterId} x="-8%" y="-8%" width="116%" height="116%">
+            <feTurbulence
+              type="fractalNoise"
+              baseFrequency="0.03"
+              numOctaves="2"
+              seed="5"
+              result="noise"
+            />
+            <feDisplacementMap
+              in="SourceGraphic"
+              in2="noise"
+              scale="1.8"
+              xChannelSelector="R"
+              yChannelSelector="G"
+            />
+          </filter>
+        )}
         {renderSvgMarker(markerStartId, arrowStart, color)}
         {renderSvgMarker(markerEndId, arrowEnd, color)}
       </defs>
@@ -1237,8 +1334,15 @@ export function EditableEdge({
         style={{
           ...style,
           stroke: color,
-          strokeWidth: selected ? Math.max(2.3, strokeWidth + 0.45) : strokeWidth,
+          strokeWidth: selected
+            ? Math.max(isOrganic ? 3.2 : 2.3, strokeWidth + 0.6)
+            : isOrganic
+            ? Math.max(2.6, strokeWidth + 0.5)
+            : strokeWidth,
           strokeDasharray: dashArray,
+          strokeLinecap: isOrganic ? 'round' : undefined,
+          strokeLinejoin: isOrganic ? 'round' : undefined,
+          filter: isOrganic ? `url(#${organicFilterId})` : undefined,
         }}
       />
 
@@ -1426,6 +1530,9 @@ export function EditableEdge({
                   minHeight: effectiveHeight ?? 28,
                   fontSize: `${labelStyle?.fontSize ?? 11}px`,
                   textAlign: labelStyle?.textAlign ?? 'center',
+                  fontFamily: getFontFamilyCss(labelStyle?.fontFamily),
+                  ['--kc-fx-color' as string]: labelStyle?.effectColor ?? '#0f172a',
+                  ['--kc-fx-start' as string]: labelVisual.text,
                 }}
                 placeholder="Rótulo..."
                 className="resize-none rounded-lg border border-indigo-500 bg-[#161920] px-2 py-1 font-medium text-zinc-100 shadow-xl focus:outline-none"
@@ -1449,15 +1556,20 @@ export function EditableEdge({
                   textAlign: labelStyle?.textAlign ?? 'center',
                   width: effectiveWidth ? `${effectiveWidth}px` : undefined,
                   height: effectiveHeight ? `${effectiveHeight}px` : undefined,
+                  fontFamily: getFontFamilyCss(labelStyle?.fontFamily),
+                  ['--kc-fx-color' as string]: labelStyle?.effectColor ?? '#0f172a',
+                  ['--kc-fx-start' as string]: labelVisual.text,
                 }}
                 title="Clique para personalizar • Arraste ao longo da seta • Duplo clique para editar texto"
                 className={`relative flex cursor-grab items-center justify-center rounded-md px-2 py-0.5 shadow-sm transition active:cursor-grabbing ${
                   isLabelSelected ? 'ring-2 ring-indigo-500/60' : ''
                 }`}
               >
-                <span className="w-full select-none whitespace-pre-wrap break-words leading-snug">
-                  {label}
-                </span>
+                <span
+  className={`w-full select-none whitespace-pre-wrap break-words leading-snug ${getTextEffectClass(labelStyle?.textEffect)}`}
+>
+  {label}
+</span>
 
                 {/* Excluir apenas o rótulo */}
                 <button

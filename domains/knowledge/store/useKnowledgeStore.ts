@@ -16,6 +16,7 @@ import {
   TopicShape,
   EdgeLineStyle,
   EdgeArrowType,
+  CanvasEdgePathType,
 } from '../types';
 import { buildSearchTokens } from '@/domains/search/utils/tokenizer';
 import { calculateSm2 } from '@/domains/review/utils/sm2';
@@ -202,7 +203,7 @@ interface KnowledgeState {
     options?: {
       sourceHandle?: string;
       targetHandle?: string;
-      edgeType?: 'smoothstep' | 'default' | 'straight';
+      edgeType?: CanvasEdgePathType;
       style?: 'solid' | 'dashed' | 'animated';
       lineStyle?: EdgeLineStyle;
       strokeWidth?: number;
@@ -1798,6 +1799,10 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       diamond: { w: 184, h: 132 },
       capsule: { w: 210, h: 64 },
       hexagon: { w: 200, h: 112 },
+      cloud: { w: 268, h: 156 },
+      banner: { w: 256, h: 80 },
+      speech: { w: 230, h: 116 },
+      'sticky-tape': { w: 224, h: 156 },
     };
 
     const dims = defaultDims[shape];
@@ -1815,10 +1820,12 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       padding: 'sm',
       textAlign: 'center',
       fontSize: 15,
+      sketch: shape === 'cloud' || shape === 'sticky-tape',
       typography: { fontSize: 15, lineHeight: 1.3, paragraphSpacing: 4 },
       topicConfig: {
         shape,
         shadow: 'md',
+        doubleBorder: shape === 'cloud',
         parentTopicId,
         defaultEdgeStyle: {
           edgeType: 'default',

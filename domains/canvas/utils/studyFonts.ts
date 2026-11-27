@@ -11,7 +11,7 @@ export const STUDY_FONT_OPTIONS: StudyFontOption[] = [
   { id: 'default', label: 'Padrão', sample: 'Aa', cssFamily: 'inherit' },
   {
     id: 'hand-print',
-    label: 'Caderno Forma',
+    label: 'Caderno',
     sample: 'Aa',
     cssFamily: 'var(--font-hand-print), cursive, sans-serif',
   },
@@ -23,7 +23,7 @@ export const STUDY_FONT_OPTIONS: StudyFontOption[] = [
   },
   {
     id: 'hand-marker',
-    label: 'Caneta Fina',
+    label: 'Caneta',
     sample: 'Aa',
     cssFamily: 'var(--font-hand-marker), cursive',
   },

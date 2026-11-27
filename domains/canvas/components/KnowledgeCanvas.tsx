@@ -71,7 +71,6 @@ import {
   FolderTree,
   ChevronRight,
   X,
-  Minus,
 } from 'lucide-react';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
 import { CanvasSpotlightMode, useUiStore } from '@/domains/ui/store/useUiStore';
@@ -85,6 +84,7 @@ import {
   EdgeArrowType,
   EdgeLabelStyle,
   EdgeWaypoint,
+  CanvasEdgePathType,
 } from '@/domains/knowledge/types';
 import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryFactory';
 import { KnowledgeCardNode } from './KnowledgeCardNode';
@@ -260,7 +260,7 @@ function CanvasInner() {
   const [openHeaderMenu, setOpenHeaderMenu] = useState<null | 'layout' | 'edge' | 'spotlight'>(null);
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
 
-  const [globalEdgeType, setGlobalEdgeType] = useState<'smoothstep' | 'default' | 'straight'>('smoothstep');
+  const [globalEdgeType, setGlobalEdgeType] = useState<CanvasEdgePathType>('smoothstep');
   const [globalAnimated, setGlobalAnimated] = useState(false);
   const [globalColor, setGlobalColor] = useState('#6366f1');
 
@@ -299,7 +299,6 @@ function CanvasInner() {
     frontierAutoEdgeIds: Set<string>;
   } | null>(null);
 
-  // Calcula o centro exato da visão atual do usuário, evitando empilhar sobre outro card
   const getSmartViewportPos = useCallback(
     (itemW = 350, itemH = 240) => {
       const rect = containerRef.current?.getBoundingClientRect();
@@ -355,7 +354,6 @@ function CanvasInner() {
     [pushHistorySnapshot, createSubtopic, setEditingTopicNodeId]
   );
 
-  // Restaura uma conexão editada manualmente para o melhor caminho automático (recalculando os lados ideais)
   const handleResetEdgeToAuto = useCallback(
     async (edgeId: string) => {
       const targetEdge = useKnowledgeStore
@@ -415,7 +413,6 @@ function CanvasInner() {
     viewportHistory.current.push(getViewport());
   }, [getViewport]);
 
-  // Enquadramento inteligente com margens seguras (evita cards encostando nas abas e no Dock inferior)
   const fitCanvasWithMargins = useCallback(
     (options?: { nodeIds?: string[]; duration?: number; maxZoom?: number }) => {
       const container = containerRef.current;
@@ -488,7 +485,6 @@ function CanvasInner() {
     [getNodes, setViewport, zenMode]
   );
 
-  // Insere uma imagem solta no Canvas (por botão, arrastar ou Ctrl+V)
   const insertImageFileToCanvas = useCallback(
     async (file: File, clientPos?: { x: number; y: number }) => {
       if (!file.type.startsWith('image/')) {
@@ -522,7 +518,6 @@ function CanvasInner() {
     [addToast, pushHistorySnapshot, screenToFlowPosition, getSmartViewportPos, createCanvasImage]
   );
 
-  // Calcula projeção em Panorama Sequencial quando a visão reúne múltiplos assuntos/tópicos
   const panorama = useMemo(() => {
     const visibleNodes = canvasNodes.filter((cn) => {
       if (cn.nodeType === 'knowledgeCard') {
@@ -549,13 +544,11 @@ function CanvasInner() {
     syncActiveProjectionOffsets(panorama.nodeOffsets, panorama.strokeOffsets);
   }, [panorama]);
 
-  // Sincroniza Zustand -> React Flow respeitando o contexto hierárquico e o Panorama Sequencial
   useEffect(() => {
     setNodes((prevNodes) => {
       const prevMap = new Map(prevNodes.map((n) => [n.id, n]));
       const next: Node[] = [];
 
-      // Molduras de mapa (atrás de todos os itens) quando o Modo Panorama está ativo
       if (panorama.isPanorama) {
         for (const section of panorama.sections) {
           next.push({
@@ -759,7 +752,6 @@ function CanvasInner() {
     });
   }, [canvasEdges, canvasNodes, cardsById, hierarchy, selectedHierarchyId, panorama, handleResetEdgeToAuto, setEdges]);
 
-  // Foco e Zoom Automático durante a edição inline + restauração consciente do viewport
   const preEditViewportRef = useRef<Viewport | null>(null);
   const manualMoveDuringEditRef = useRef(false);
   const isProgrammaticMoveRef = useRef(false);
@@ -782,9 +774,7 @@ function CanvasInner() {
     const prevTarget = prevEditTargetRef.current;
     prevEditTargetRef.current = activeEditTargetNodeId;
 
-    // 1. Iniciando edição direta em um Card ou Texto Livre
     if (activeEditTargetNodeId && prevTarget !== activeEditTargetNodeId) {
-      // Guarda a câmera original apenas na entrada (se alternou direto de um card a outro, mantém a original)
       if (!prevTarget) {
         preEditViewportRef.current = getViewport();
         manualMoveDuringEditRef.current = false;
@@ -805,7 +795,6 @@ function CanvasInner() {
             ? targetNode.style.height
             : 220);
 
-        // Zoom confortável (sem exagerar na aproximação), respeitando espaço para a barra flutuante acima
         const fitW = (rect.width * 0.62) / Math.max(180, nodeW);
         const fitH = (rect.height * 0.58) / Math.max(120, nodeH);
         const currentZoom = getViewport().zoom;
@@ -817,7 +806,6 @@ function CanvasInner() {
         const nodeCenterX = targetNode.position.x + nodeW / 2;
         const nodeCenterY = targetNode.position.y + nodeH / 2;
 
-        // Desloca levemente para baixo (+24px) para acomodar confortavelmente a barra de formatação no topo do card
         const nextVp: Viewport = {
           x: Math.round((rect.width / 2 - nodeCenterX * targetZoom) * 10) / 10,
           y: Math.round((rect.height / 2 + 24 - nodeCenterY * targetZoom) * 10) / 10,
@@ -835,7 +823,6 @@ function CanvasInner() {
       return () => clearTimeout(timer);
     }
 
-    // 2. Finalizando ou cancelando edição
     if (!activeEditTargetNodeId && prevTarget) {
       const savedVp = preEditViewportRef.current;
       const movedManually = manualMoveDuringEditRef.current;
@@ -869,7 +856,6 @@ function CanvasInner() {
     }
   }, [activeEditTargetNodeId, getNodes, getViewport, setViewport, addToast]);
 
-  // Limpa histórico/seleções e reenquadra a câmera com margens seguras ao trocar de contexto
   const prevContextKeyRef = useRef<string | null>(null);
   useEffect(() => {
     preEditViewportRef.current = null;
@@ -914,7 +900,6 @@ function CanvasInner() {
     return ordered;
   }, [hierarchy]);
 
-  // Restaura última câmera do Workspace
   const restoredWorkspaceRef = useRef<string | null>(null);
   useEffect(() => {
     if (!activeWorkspaceId || restoredWorkspaceRef.current === activeWorkspaceId) return;
@@ -937,7 +922,6 @@ function CanvasInner() {
     setTimeout(() => fitCanvasWithMargins({ duration: 350, maxZoom: 1.05 }), 90);
   }, [activeWorkspaceId, nodes.length, setViewport, fitCanvasWithMargins]);
 
-  // "Voar até o Card"
   useEffect(() => {
     if (!focusRequest) return;
     const targetCanvasNode = canvasNodes.find((n) => n.cardId === focusRequest.cardId);
@@ -964,7 +948,6 @@ function CanvasInner() {
     return () => document.removeEventListener('click', close);
   }, [openHeaderMenu, isContextMenuOpen]);
 
-  // Ctrl+V de prints direto no Canvas (fora da edição de texto)
   useEffect(() => {
     const handlePasteOnCanvas = (e: ClipboardEvent) => {
       if (
@@ -1133,7 +1116,6 @@ function CanvasInner() {
   const showEdgeToolbar =
     canShowContextualBar && !showEdgeLabelToolbar && Boolean(activeEdgeRecord);
 
-  // Agrupar seleção atual (envolve automaticamente 2+ cards/imagens em um Grupo)
   const handleGroupSelectedItems = async () => {
     if (selectedGroupableNodes.length < 2) return;
     pushHistorySnapshot();
@@ -1166,7 +1148,6 @@ function CanvasInner() {
     addToast({ message: `${selectedGroupableNodes.length} itens agrupados em uma seção`, variant: 'success' });
   };
 
-  // Atalhos de teclado
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
       if (
@@ -1220,7 +1201,6 @@ function CanvasInner() {
       const cmdOrCtrl = e.metaKey || e.ctrlKey;
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
-        // Se apenas o rótulo estiver focado, remove somente o rótulo preservando a conexão
         if (selectedEdgeLabelId) {
           e.preventDefault();
           pushHistorySnapshot();
@@ -1303,8 +1283,6 @@ function CanvasInner() {
     handleQuickSubtopic,
   ]);
 
-
-  // Inicia arrasto rígido de 1 ou vários itens (classificando conexões internas vs. de fronteira)
   const startMultiDrag = useCallback(
     (anchorNode: Node | undefined, draggedNodes?: Node[]) => {
       if (!anchorNode) return;
@@ -1322,7 +1300,6 @@ function CanvasInner() {
       const extraGroupChildren: Array<{ id: string; startX: number; startY: number }> = [];
       const extraAddedIds = new Set<string>();
 
-      // Se algum Grupo estiver sendo movido, inclui automaticamente seus itens internos ainda não selecionados
       for (const node of baseDragged) {
         if (node.type !== 'canvasGroup') continue;
         const gW = Number(node.measured?.width || node.style?.width || 640);
@@ -1365,10 +1342,6 @@ function CanvasInner() {
 
       const movingNodeIds = new Set<string>([...rfMovingIds, ...extraAddedIds]);
 
-      // Classifica cada conexão:
-      // 1) Interna (ambas pontas se movem juntas) -> translada waypoints rigidamente, sem alterar lados/rótulos
-      // 2) Fronteira (1 ponta move, 1 fica fixa) -> se automática, recalcula o melhor lado estrategicamente
-      // 3) Externa (nenhuma ponta move) -> intocada
       const storeEdges = useKnowledgeStore.getState().canvasEdges;
       const internalEdgesWithWaypoints: Array<{ id: string; origWaypoints: EdgeWaypoint[] }> = [];
       const frontierAutoEdgeIds = new Set<string>();
@@ -1421,7 +1394,6 @@ function CanvasInner() {
       const dx = Math.round(anchor.position.x - drag.anchorStartX);
       const dy = Math.round(anchor.position.y - drag.anchorStartY);
 
-      // Move filhos não-selecionados dentro de grupos arrastados
       if (drag.extraGroupChildren.length > 0) {
         const childMap = new Map(drag.extraGroupChildren.map((c) => [c.id, c]));
         setNodes((nds) =>
@@ -1441,7 +1413,6 @@ function CanvasInner() {
         drag.internalEdgesWithWaypoints.map((item) => [item.id, item.origWaypoints])
       );
 
-      // Monta mapa de posições mais recentes para cálculo preciso das conexões de fronteira
       const liveNodeMap = new Map(currentNodes.map((n) => [n.id, n]));
       if (draggedNodes) {
         for (const dn of draggedNodes) liveNodeMap.set(dn.id, dn);
@@ -1456,7 +1427,6 @@ function CanvasInner() {
 
       setEdges((eds) =>
         eds.map((edge) => {
-          // Conexão interna com dobras manuais: translação rígida 1:1 com a seleção
           const origWps = internalMap.get(edge.id);
           if (origWps) {
             return {
@@ -1468,7 +1438,6 @@ function CanvasInner() {
             };
           }
 
-          // Conexão de fronteira automática: adapta lados sem mexer nos nós parados
           if (drag.frontierAutoEdgeIds.has(edge.id)) {
             const sourceNode = liveNodeMap.get(edge.source);
             const targetNode = liveNodeMap.get(edge.target);
@@ -1515,7 +1484,6 @@ function CanvasInner() {
       const dx = anchor ? Math.round(anchor.position.x - drag.anchorStartX) : 0;
       const dy = anchor ? Math.round(anchor.position.y - drag.anchorStartY) : 0;
 
-      // 1. Persiste TODOS os nós movidos na seleção (nunca perde nenhum item da multi-seleção)
       const extraMap = new Map(drag.extraGroupChildren.map((c) => [c.id, c]));
       const positionUpdates: Array<{ id: string; x: number; y: number }> = [];
 
@@ -1543,7 +1511,6 @@ function CanvasInner() {
         await persistNodePositions(positionUpdates);
       }
 
-      // 2. Persiste translação rígida das conexões internas com pontos manuais
       const edgePersistOps: Array<Promise<void>> = [];
       if (dx !== 0 || dy !== 0) {
         for (const item of drag.internalEdgesWithWaypoints) {
@@ -1555,7 +1522,6 @@ function CanvasInner() {
         }
       }
 
-      // 3. Persiste novos lados ótimos apenas das conexões automáticas de fronteira
       if (drag.frontierAutoEdgeIds.size > 0) {
         const storeEdges = useKnowledgeStore.getState().canvasEdges;
         for (const ce of storeEdges) {
@@ -1646,7 +1612,6 @@ function CanvasInner() {
     [addCanvasEdge, globalEdgeType, globalAnimated, globalColor, pushHistorySnapshot]
   );
 
-  // Reconexão por arrasto da ponta da seta (escolher novo lado ou novo elemento)
   const onReconnect = useCallback(
     (oldEdge: Edge, newConnection: Connection) => {
       if (!newConnection.source || !newConnection.target) return;
@@ -1774,7 +1739,8 @@ function CanvasInner() {
             ...ce,
             sourceHandle: matched.sourceHandle ?? ce.sourceHandle,
             targetHandle: matched.targetHandle ?? ce.targetHandle,
-            routingMode: 'auto' as const, waypoints: [],
+            routingMode: 'auto' as const,
+            waypoints: [],
             updatedAt: Date.now(),
           }
         : ce;
@@ -1784,7 +1750,7 @@ function CanvasInner() {
   };
 
   const handleUpdateAllEdges = async (patch: {
-    edgeType?: 'smoothstep' | 'default' | 'straight';
+    edgeType?: CanvasEdgePathType;
     animated?: boolean;
     color?: string;
   }) => {
@@ -1845,7 +1811,6 @@ function CanvasInner() {
     }, 120);
   };
 
-  // Cria Card sempre no centro exato da sua visão atual
   const handleCreateQuickCard = async (
     template: 'blank' | 'law' | 'jurisprudence',
     title?: string
@@ -1866,7 +1831,6 @@ function CanvasInner() {
     const pos = getSmartViewportPos(640, 360);
     await createCanvasGroup(pos.x, pos.y);
   };
-
 
   const handleCreateQuickTopic = async (shape: TopicShape = 'rounded') => {
     pushHistorySnapshot();
@@ -2004,10 +1968,11 @@ function CanvasInner() {
           <div onClick={(e) => e.stopPropagation()} className="absolute left-0 top-full z-50 mt-2 w-56 space-y-3 rounded-xl border border-zinc-800 bg-[#161920] p-3.5 shadow-2xl">
             <div>
               <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Formato</span>
-              <div className="flex gap-1.5">
-                <button onClick={() => handleUpdateAllEdges({ edgeType: 'smoothstep' })} className={`flex-1 rounded-lg py-1.5 text-[11px] font-medium ${globalEdgeType === 'smoothstep' ? 'bg-indigo-600 text-white' : 'bg-zinc-800/80 text-zinc-300'}`}>Ortogonal</button>
-                <button onClick={() => handleUpdateAllEdges({ edgeType: 'default' })} className={`flex-1 rounded-lg py-1.5 text-[11px] font-medium ${globalEdgeType === 'default' ? 'bg-indigo-600 text-white' : 'bg-zinc-800/80 text-zinc-300'}`}>Curva</button>
-                <button onClick={() => handleUpdateAllEdges({ edgeType: 'straight' })} className={`flex-1 rounded-lg py-1.5 text-[11px] font-medium ${globalEdgeType === 'straight' ? 'bg-indigo-600 text-white' : 'bg-zinc-800/80 text-zinc-300'}`}>Reta</button>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button onClick={() => handleUpdateAllEdges({ edgeType: 'smoothstep' })} className={`rounded-lg py-1.5 text-[11px] font-medium ${globalEdgeType === 'smoothstep' ? 'bg-indigo-600 text-white' : 'bg-zinc-800/80 text-zinc-300'}`}>Ortogonal</button>
+                <button onClick={() => handleUpdateAllEdges({ edgeType: 'default' })} className={`rounded-lg py-1.5 text-[11px] font-medium ${globalEdgeType === 'default' ? 'bg-indigo-600 text-white' : 'bg-zinc-800/80 text-zinc-300'}`}>Curva</button>
+                <button onClick={() => handleUpdateAllEdges({ edgeType: 'straight' })} className={`rounded-lg py-1.5 text-[11px] font-medium ${globalEdgeType === 'straight' ? 'bg-indigo-600 text-white' : 'bg-zinc-800/80 text-zinc-300'}`}>Reta</button>
+                <button onClick={() => handleUpdateAllEdges({ edgeType: 'organic' })} className={`rounded-lg py-1.5 text-[11px] font-medium ${globalEdgeType === 'organic' ? 'bg-indigo-600 text-white' : 'bg-zinc-800/80 text-zinc-300'}`}>Orgânica</button>
               </div>
             </div>
             <div>
@@ -2152,7 +2117,7 @@ function CanvasInner() {
           e.preventDefault();
         }
       }}
-     onDragOver={(e) => {
+      onDragOver={(e) => {
         if (e.dataTransfer.types.includes('Files')) {
           e.preventDefault();
           setIsDraggingImageFile(true);
@@ -2230,7 +2195,6 @@ function CanvasInner() {
           setLiveViewport(instance.getViewport());
         }}
         onMoveStart={(event) => {
-          // React Flow envia event !== null somente quando o usuário interage com mouse/toque/scroll
           if (activeEditTargetNodeId && event && !isProgrammaticMoveRef.current) {
             manualMoveDuringEditRef.current = true;
           }
@@ -2386,7 +2350,6 @@ function CanvasInner() {
 
               <div className="h-4 w-px bg-zinc-800" />
 
-              {/* Cores */}
               <div className="flex items-center gap-1.5 px-0.5">
                 {CARD_COLOR_OPTIONS.map((c) => (
                   <button
@@ -2403,15 +2366,20 @@ function CanvasInner() {
 
               <div className="h-4 w-px bg-zinc-800" />
 
-              {/* Tipografia por card (Fonte, Entrelinha e Parágrafos) */}
               <TypographyPopover
                 value={firstSelectedCard?.typography}
                 defaults={DEFAULT_CARD_TYPOGRAPHY}
                 onChange={(next) => updateCardsMetaBulk(selectedCardIds, { typography: next })}
                 onReset={() => updateCardsMetaBulk(selectedCardIds, { typography: undefined })}
+                titleStyle={firstSelectedCard?.titleStyle}
+                onTitleStyleChange={(next) =>
+                  updateCardsMetaBulk(selectedCardIds, { titleStyle: next })
+                }
+                onTitleStyleReset={() =>
+                  updateCardsMetaBulk(selectedCardIds, { titleStyle: undefined })
+                }
               />
 
-              {/* Observação / Pegadinha personalizável (1 card selecionado) */}
               {firstSelectedCard && selectedCardIds.length === 1 && (
                 <CalloutCustomizerPopover
                   value={resolveCardCallout(firstSelectedCard)}
@@ -2425,7 +2393,6 @@ function CanvasInner() {
                 />
               )}
 
-              {/* Ajuste de tamanho Auto vs Fixo + Preenchimento */}
               {firstSelectedCardCanvasNode && (
                 <>
                   <button
@@ -2538,7 +2505,6 @@ function CanvasInner() {
                 </button>
               )}
 
-              {/* Converter Card em Texto Livre */}
               {firstSelectedCardCanvasNode && firstSelectedCard && (
                 <button
                   type="button"
@@ -2620,7 +2586,6 @@ function CanvasInner() {
 
               <div className="h-4 w-px bg-zinc-800" />
 
-              {/* Cor da Borda / Título */}
               <div className="flex items-center gap-1">
                 <span className="mr-1 text-[10px] font-semibold uppercase text-zinc-500">Borda</span>
                 {GROUP_PALETTE.map((hex) => (
@@ -2637,7 +2602,6 @@ function CanvasInner() {
 
               <div className="h-4 w-px bg-zinc-800" />
 
-              {/* Cor do Fundo Interno */}
               <div className="flex items-center gap-1">
                 <span className="mr-1 text-[10px] font-semibold uppercase text-zinc-500">Fundo</span>
                 {GROUP_PALETTE.map((hex) => (
@@ -2656,7 +2620,6 @@ function CanvasInner() {
 
               <div className="h-4 w-px bg-zinc-800" />
 
-              {/* Opacidade do Fundo */}
               <select
                 value={activeGroupRecord.bgOpacity ?? 'subtle'}
                 onChange={(e) =>
@@ -2671,7 +2634,6 @@ function CanvasInner() {
                 <option value="tinted">Fundo: Destaque</option>
               </select>
 
-              {/* Estilo da Borda */}
               <select
                 value={activeGroupRecord.borderStyle ?? 'dashed'}
                 onChange={(e) =>
@@ -2687,7 +2649,6 @@ function CanvasInner() {
                 <option value="none">Sem borda</option>
               </select>
 
-              {/* Espessura da Borda */}
               <select
                 value={activeGroupRecord.borderWidth ?? 'medium'}
                 onChange={(e) =>
@@ -2730,7 +2691,6 @@ function CanvasInner() {
                 Imagem
               </span>
 
-              {/* Modo de Corte / Enquadramento interativo */}
               <button
                 onClick={() => {
                   const next = croppingImageNodeId === activeImageRecord.id ? null : activeImageRecord.id;
@@ -2748,7 +2708,6 @@ function CanvasInner() {
                 {croppingImageNodeId === activeImageRecord.id ? 'Cortando...' : 'Cortar'}
               </button>
 
-              {/* Ajuste de preenchimento (Inteira / Cortar / Esticar Livre) */}
               <select
                 value={activeImageRecord.imageFit ?? 'contain'}
                 onChange={(e) =>
@@ -2764,7 +2723,6 @@ function CanvasInner() {
                 <option value="fill">Ajuste: Esticar Livre</option>
               </select>
 
-              {/* Travar / Liberar proporção ao redimensionar */}
               <button
                 onClick={() =>
                   updateCanvasNode(activeImageRecord.id, {
@@ -2784,7 +2742,6 @@ function CanvasInner() {
 
               <div className="h-4 w-px bg-zinc-800" />
 
-              {/* Girar e Espelhar */}
               <button
                 onClick={() =>
                   updateCanvasNode(activeImageRecord.id, {
@@ -2819,7 +2776,6 @@ function CanvasInner() {
                 <FlipVertical2 className="h-3.5 w-3.5" />
               </button>
 
-              {/* Opacidade */}
               <div className="flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1">
                 <span className="text-[10px] text-zinc-500">Opac.</span>
                 <input
@@ -2835,7 +2791,6 @@ function CanvasInner() {
                 />
               </div>
 
-              {/* Cantos arredondados */}
               <select
                 value={activeImageRecord.borderRadius ?? 'xl'}
                 onChange={(e) =>
@@ -2854,7 +2809,6 @@ function CanvasInner() {
 
               <div className="h-4 w-px bg-zinc-800" />
 
-              {/* Moldura / Cores */}
               <div className="flex items-center gap-1">
                 {GROUP_PALETTE.map((hex) => (
                   <button
@@ -2882,7 +2836,6 @@ function CanvasInner() {
                 </button>
               </div>
 
-              {/* Resetar ajustes */}
               <button
                 onClick={() => {
                   setCroppingImageNodeId(null);
@@ -2924,7 +2877,7 @@ function CanvasInner() {
           </Panel>
         )}
 
-        {/* NAVEGAÇÃO DE CONTEXTO FLUTUANTE (ÍCONE COMPACTO — NUNCA COBRE A BARRA DE EDIÇÃO) */}
+        {/* NAVEGAÇÃO DE CONTEXTO FLUTUANTE (ÍCONE COMPACTO) */}
         {!zenMode && (
           <Panel position="top-left" className="ml-3 mt-3">
             <div className="relative" onClick={(e) => e.stopPropagation()}>
@@ -2953,7 +2906,6 @@ function CanvasInner() {
 
               {isContextMenuOpen && (
                 <div className="absolute left-0 top-full z-[130] mt-2 flex max-h-[68vh] w-72 flex-col overflow-hidden rounded-2xl border border-indigo-500/35 bg-[#161920]/98 shadow-2xl backdrop-blur-xl">
-                  {/* Cabeçalho + Caminho Ativo */}
                   <div className="border-b border-zinc-800/80 p-3">
                     <div className="mb-1.5 flex items-center justify-between">
                       <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
@@ -2998,7 +2950,6 @@ function CanvasInner() {
                     )}
                   </div>
 
-                  {/* Lista Navegável de Disciplinas / Assuntos / Subassuntos / Tópicos */}
                   <div className="flex-1 space-y-0.5 overflow-y-auto p-2">
                     <button
                       type="button"
@@ -3083,7 +3034,6 @@ function CanvasInner() {
                 Texto
               </span>
 
-              {/* Presets em 1 clique */}
               <div className="flex items-center gap-1">
                 {(
                   [
@@ -3154,7 +3104,6 @@ function CanvasInner() {
 
               <div className="h-4 w-px bg-zinc-800" />
 
-              {/* Tipografia completa (Fonte, Entrelinha, Parágrafos) + Nota/Pegadinha */}
               <TypographyPopover
                 value={activeTextRecord.typography}
                 legacyFontSize={activeTextRecord.fontSize}
@@ -3179,7 +3128,6 @@ function CanvasInner() {
                 onChange={(next) => updateCanvasNode(activeTextRecord.id, { callout: next })}
               />
 
-              {/* Alinhamento do Bloco */}
               <div className="flex items-center gap-0.5 rounded-lg border border-zinc-800 bg-[#0F1115] p-0.5">
                 {(
                   [
@@ -3211,7 +3159,6 @@ function CanvasInner() {
 
               <div className="h-4 w-px bg-zinc-800" />
 
-              {/* Cor Base do Texto */}
               <div className="flex items-center gap-1">
                 <span className="text-[10px] font-semibold uppercase text-zinc-500">Cor</span>
                 {['', '#f4f4f5', '#18181b', '#818cf8', '#38bdf8', '#34d399', '#fbbf24', '#fb7185'].map(
@@ -3236,7 +3183,6 @@ function CanvasInner() {
 
               <div className="h-4 w-px bg-zinc-800" />
 
-              {/* Fundo e Opacidade */}
               <div className="flex items-center gap-1">
                 <span className="text-[10px] font-semibold uppercase text-zinc-500">Fundo</span>
                 {GROUP_PALETTE.map((hex) => (
@@ -3297,9 +3243,30 @@ function CanvasInner() {
                 <option value="dotted">Pontilhada</option>
               </select>
 
+              <button
+                type="button"
+                onClick={() =>
+                  updateCanvasNode(activeTextRecord.id, {
+                    sketch: !activeTextRecord.sketch,
+                    borderStyle:
+                      !activeTextRecord.sketch &&
+                      (activeTextRecord.borderStyle ?? 'none') === 'none'
+                        ? 'solid'
+                        : activeTextRecord.borderStyle,
+                  })
+                }
+                className={`rounded-lg border px-2 py-1 text-[11px] font-medium transition ${
+                  activeTextRecord.sketch
+                    ? 'border-amber-500/60 bg-amber-500/15 text-amber-300'
+                    : 'border-zinc-800 bg-[#0F1115] text-zinc-400 hover:text-zinc-100'
+                }`}
+                title="Ativar borda com efeito desenhado à mão (caderno)"
+              >
+                À Mão
+              </button>
+
               <div className="h-4 w-px bg-zinc-800" />
 
-              {/* Promover para Knowledge Card */}
               <button
                 type="button"
                 onClick={async () => {
@@ -3357,7 +3324,6 @@ function CanvasInner() {
                 Tópico
               </span>
 
-              {/* Criar Subtópico */}
               <button
                 type="button"
                 onClick={() => handleQuickSubtopic(activeTopicRecord.id)}
@@ -3367,7 +3333,6 @@ function CanvasInner() {
                 <GitBranch className="h-3.5 w-3.5" /> + Subtópico
               </button>
 
-              {/* Atalho exclusivo para Losango de Decisão: criar ramos Sim / Não */}
               {activeTopicRecord.topicConfig?.shape === 'diamond' && (
                 <button
                   type="button"
@@ -3394,7 +3359,6 @@ function CanvasInner() {
 
               <div className="h-4 w-px bg-zinc-800" />
 
-              {/* Formato do Tópico / Balão */}
               <select
                 value={activeTopicRecord.topicConfig?.shape ?? 'rounded'}
                 onChange={(e) => {
@@ -3403,6 +3367,7 @@ function CanvasInner() {
                     topicConfig: {
                       ...(activeTopicRecord.topicConfig ?? { shape: nextShape }),
                       shape: nextShape,
+                      ...(nextShape === 'cloud' ? { doubleBorder: true } : {}),
                     },
                   };
                   if (nextShape === 'square' || nextShape === 'circle') {
@@ -3412,6 +3377,18 @@ function CanvasInner() {
                   } else if (nextShape === 'diamond') {
                     patch.width = Math.max(160, activeTopicRecord.width || 184);
                     patch.height = Math.max(120, activeTopicRecord.height || 132);
+                  } else if (nextShape === 'cloud') {
+                    patch.width = Math.max(240, activeTopicRecord.width || 268);
+                    patch.height = Math.max(140, activeTopicRecord.height || 156);
+                  } else if (nextShape === 'banner') {
+                    patch.width = Math.max(230, activeTopicRecord.width || 256);
+                    patch.height = Math.max(76, activeTopicRecord.height || 80);
+                  } else if (nextShape === 'speech') {
+                    patch.width = Math.max(210, activeTopicRecord.width || 230);
+                    patch.height = Math.max(108, activeTopicRecord.height || 116);
+                  } else if (nextShape === 'sticky-tape') {
+                    patch.width = Math.max(200, activeTopicRecord.width || 224);
+                    patch.height = Math.max(140, activeTopicRecord.height || 156);
                   }
                   updateCanvasNode(activeTopicRecord.id, patch);
                 }}
@@ -3421,6 +3398,10 @@ function CanvasInner() {
                 <option value="rounded">Arredondado</option>
                 <option value="rect">Retângulo</option>
                 <option value="capsule">Cápsula</option>
+                <option value="cloud">Nuvem</option>
+                <option value="banner">Faixa / Banner</option>
+                <option value="speech">Balão de Fala</option>
+                <option value="sticky-tape">Post-it c/ Fita</option>
                 <option value="square">Quadrado</option>
                 <option value="circle">Círculo</option>
                 <option value="ellipse">Elipse</option>
@@ -3428,7 +3409,6 @@ function CanvasInner() {
                 <option value="hexagon">Hexágono</option>
               </select>
 
-              {/* Tipografia */}
               <TypographyPopover
                 value={activeTopicRecord.typography}
                 legacyFontSize={activeTopicRecord.fontSize}
@@ -3447,7 +3427,6 @@ function CanvasInner() {
                 }
               />
 
-              {/* Alinhamento */}
               <div className="flex items-center gap-0.5 rounded-lg border border-zinc-800 bg-[#0F1115] p-0.5">
                 {(
                   [
@@ -3473,7 +3452,6 @@ function CanvasInner() {
 
               <div className="h-4 w-px bg-zinc-800" />
 
-              {/* Cores principais */}
               <div className="flex items-center gap-1">
                 {GROUP_PALETTE.map((hex) => (
                   <button
@@ -3503,7 +3481,6 @@ function CanvasInner() {
                 ))}
               </div>
 
-              {/* Opacidade do fundo */}
               <select
                 value={activeTopicRecord.bgOpacity ?? 'tinted'}
                 onChange={(e) =>
@@ -3520,7 +3497,6 @@ function CanvasInner() {
                 <option value="solid">Fundo: Sólido</option>
               </select>
 
-              {/* Borda e Sombra */}
               <select
                 value={activeTopicRecord.borderStyle ?? 'solid'}
                 onChange={(e) =>
@@ -3536,6 +3512,41 @@ function CanvasInner() {
                 <option value="dotted">Pontilhada</option>
                 <option value="none">Sem borda</option>
               </select>
+
+              <button
+                type="button"
+                onClick={() =>
+                  updateCanvasNode(activeTopicRecord.id, { sketch: !activeTopicRecord.sketch })
+                }
+                className={`rounded-lg border px-2 py-1 text-[11px] font-medium transition ${
+                  activeTopicRecord.sketch
+                    ? 'border-amber-500/60 bg-amber-500/15 text-amber-300'
+                    : 'border-zinc-800 bg-[#0F1115] text-zinc-400 hover:text-zinc-100'
+                }`}
+                title="Efeito de borda desenhada à mão (caderno)"
+              >
+                À Mão
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  updateCanvasNode(activeTopicRecord.id, {
+                    topicConfig: {
+                      ...(activeTopicRecord.topicConfig ?? { shape: 'rounded' }),
+                      doubleBorder: !activeTopicRecord.topicConfig?.doubleBorder,
+                    },
+                  })
+                }
+                className={`rounded-lg border px-2 py-1 text-[11px] font-medium transition ${
+                  activeTopicRecord.topicConfig?.doubleBorder
+                    ? 'border-indigo-500/60 bg-indigo-500/15 text-indigo-200'
+                    : 'border-zinc-800 bg-[#0F1115] text-zinc-400 hover:text-zinc-100'
+                }`}
+                title="Contorno duplo tracejado interno"
+              >
+                Dupla
+              </button>
 
               <select
                 value={activeTopicRecord.topicConfig?.shadow ?? 'md'}
@@ -3558,7 +3569,6 @@ function CanvasInner() {
                 <option value="glow">Brilho</option>
               </select>
 
-              {/* Estilo padrão das conexões saindo deste tópico */}
               <select
                 value={activeTopicRecord.topicConfig?.defaultEdgeStyle?.edgeType ?? 'default'}
                 onChange={(e) =>
@@ -3567,7 +3577,7 @@ function CanvasInner() {
                       ...(activeTopicRecord.topicConfig ?? { shape: 'rounded' }),
                       defaultEdgeStyle: {
                         ...(activeTopicRecord.topicConfig?.defaultEdgeStyle ?? {}),
-                        edgeType: e.target.value as 'smoothstep' | 'default' | 'straight',
+                        edgeType: e.target.value as CanvasEdgePathType,
                       },
                     },
                   })
@@ -3578,9 +3588,9 @@ function CanvasInner() {
                 <option value="default">Setas: Curva</option>
                 <option value="smoothstep">Setas: Ortogonal</option>
                 <option value="straight">Setas: Reta</option>
+                <option value="organic">Setas: Orgânica</option>
               </select>
 
-              {/* Ícones rápidos */}
               <div className="flex items-center gap-0.5">
                 {['🎯', '💡', '⚖️', '📌', '🔀'].map((ic) => (
                   <button
@@ -3646,13 +3656,13 @@ function CanvasInner() {
                 Conexão
               </span>
 
-              {/* Tipo de curva / trajeto */}
               <div className="flex items-center gap-0.5 rounded-lg border border-zinc-800 bg-[#0F1115] p-0.5">
                 {(
                   [
                     { id: 'smoothstep', label: 'Ortogonal' },
                     { id: 'default', label: 'Curva' },
                     { id: 'straight', label: 'Reta' },
+                    { id: 'organic', label: 'Orgânica' },
                   ] as const
                 ).map((opt) => (
                   <button
@@ -3670,7 +3680,6 @@ function CanvasInner() {
                 ))}
               </div>
 
-              {/* Estilo de linha + Animada */}
               <select
                 value={
                   activeEdgeRecord.lineStyle ??
@@ -3713,7 +3722,6 @@ function CanvasInner() {
                 Animada
               </button>
 
-              {/* Espessura */}
               <div className="flex items-center gap-1 rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1">
                 <span className="text-[10px] text-zinc-500">Esp.</span>
                 <input
@@ -3731,7 +3739,6 @@ function CanvasInner() {
                 />
               </div>
 
-              {/* Pontas de seta (Início / Fim) */}
               <select
                 value={activeEdgeRecord.arrowStart ?? 'none'}
                 onChange={(e) =>
@@ -3745,6 +3752,7 @@ function CanvasInner() {
                 <option value="none">Início: Sem</option>
                 <option value="arrow">Início: Seta</option>
                 <option value="arrowclosed">Início: Cheia</option>
+                <option value="hand">Início: À Mão</option>
                 <option value="dot">Início: Ponto</option>
               </select>
 
@@ -3760,11 +3768,11 @@ function CanvasInner() {
               >
                 <option value="arrowclosed">Fim: Cheia</option>
                 <option value="arrow">Fim: Seta</option>
+                <option value="hand">Fim: À Mão</option>
                 <option value="dot">Fim: Ponto</option>
                 <option value="none">Fim: Sem</option>
               </select>
 
-              {/* Cor */}
               <div className="flex items-center gap-1">
                 {EDGE_COLORS.map((hex) => (
                   <button
@@ -3781,8 +3789,6 @@ function CanvasInner() {
                 ))}
               </div>
 
-              {/* Botão para personalizar o rótulo caso a seta já possua texto */}
-              {/* Adicionar ou personalizar o rótulo diretamente pela barra */}
               {activeEdgeRecord.label?.trim() ? (
                 <button
                   type="button"
@@ -3806,7 +3812,6 @@ function CanvasInner() {
                 </button>
               )}
 
-              {/* Restaurar para o melhor caminho automático (limpa dobras manuais e recalcula os lados) */}
               <button
                 type="button"
                 onClick={() => handleResetEdgeToAuto(activeEdgeRecord.id)}
@@ -3877,7 +3882,6 @@ function CanvasInner() {
                     <Pencil className="h-3 w-3 text-indigo-400" /> Texto
                   </button>
 
-                  {/* Presets padronizados com a seta e o tema */}
                   <select
                     value={ls.preset ?? 'auto'}
                     onChange={(e) =>
@@ -3899,7 +3903,6 @@ function CanvasInner() {
                     <option value="custom">Personalizado</option>
                   </select>
 
-                  {/* Cores sincronizadas com conexões e cards */}
                   <div className="flex items-center gap-1">
                     {EDGE_COLORS.map((hex) => (
                       <button
@@ -3924,7 +3927,6 @@ function CanvasInner() {
                     ))}
                   </div>
 
-                  {/* Cor do texto */}
                   <div className="flex items-center gap-0.5">
                     {['', '#ffffff', '#18181b', '#fde68a', '#bae6fd'].map((hex) => (
                       <button
@@ -3944,28 +3946,39 @@ function CanvasInner() {
 
                   <div className="h-4 w-px bg-zinc-800" />
 
-                  {/* Fonte, Negrito e Alinhamento */}
-                  <div className="flex items-center gap-0.5 rounded-lg border border-zinc-800 bg-[#0F1115] px-1 py-0.5">
-                    <button
-                      type="button"
-                      onClick={() => updateLabelStyle({ fontSize: Math.max(9, currentFont - 1) })}
-                      className="rounded p-0.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
-                      title="Diminuir fonte"
-                    >
-                      <Minus className="h-3 w-3" />
-                    </button>
-                    <span className="w-7 text-center font-mono text-[10.5px] text-zinc-200">
-                      {currentFont}px
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => updateLabelStyle({ fontSize: Math.min(26, currentFont + 1) })}
-                      className="rounded p-0.5 text-zinc-400 hover:bg-zinc-800 hover:text-white"
-                      title="Aumentar fonte"
-                    >
-                      <Plus className="h-3 w-3" />
-                    </button>
-                  </div>
+                  <TypographyPopover
+                    hideSpacingControls
+                    value={{
+                      fontSize: currentFont,
+                      fontFamily: ls.fontFamily ?? 'default',
+                      textEffect: ls.textEffect ?? 'none',
+                      effectColor: ls.effectColor ?? '#0f172a',
+                    }}
+                    defaults={{
+                      fontSize: 11,
+                      lineHeight: 1.3,
+                      paragraphSpacing: 4,
+                      fontFamily: 'default',
+                      textEffect: 'none',
+                      effectColor: '#0f172a',
+                    }}
+                    onChange={(next) =>
+                      updateLabelStyle({
+                        fontSize: next.fontSize,
+                        fontFamily: next.fontFamily,
+                        textEffect: next.textEffect,
+                        effectColor: next.effectColor,
+                      })
+                    }
+                    onReset={() =>
+                      updateLabelStyle({
+                        fontSize: undefined,
+                        fontFamily: undefined,
+                        textEffect: undefined,
+                        effectColor: undefined,
+                      })
+                    }
+                  />
 
                   <button
                     type="button"
@@ -4009,7 +4022,6 @@ function CanvasInner() {
 
                   <div className="h-4 w-px bg-zinc-800" />
 
-                  {/* Rotação: Seguir seta automaticamente ou ângulo manual */}
                   <button
                     type="button"
                     onClick={() =>
@@ -4059,7 +4071,6 @@ function CanvasInner() {
                     </button>
                   </div>
 
-                  {/* Restaurar tamanho/posição/estilo do rótulo */}
                   {(ls.width || ls.height || ls.rotation || ls.autoRotate) && (
                     <button
                       type="button"
@@ -4082,7 +4093,6 @@ function CanvasInner() {
                     </button>
                   )}
 
-                  {/* Excluir apenas o rótulo */}
                   <button
                     type="button"
                     onClick={() => {

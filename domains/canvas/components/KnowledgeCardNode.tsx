@@ -11,7 +11,7 @@ import {
 } from '@xyflow/react';
 import { Pin, Star, Flame, Plus, Minus, Eye, EyeOff, Maximize2 } from 'lucide-react';
 import { CanvasNodePosition, KnowledgeCardMeta } from '@/domains/knowledge/types';
-import { resolveCardCallout } from '@/domains/knowledge/utils/defaults';
+import { resolveCardCallout, resolveCardTitleStyle, } from '@/domains/knowledge/utils/defaults';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
 import { useUiStore } from '@/domains/ui/store/useUiStore';
 import { InlineCardEditor } from './InlineCardEditor';
@@ -227,6 +227,7 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
   const paddingClass = CARD_PADDING_CLASS[padding];
 
   const callout = resolveCardCallout(card);
+  const titleStyle = resolveCardTitleStyle(card);
   const calloutVisible = Boolean((callout.text ?? '').trim()) && callout.visible !== false;
   const calloutPos = callout.position ?? 'bottom';
   const hasFooterTags = card.tags.length > 0 || (canvasRecallMode && isRevealed);
@@ -343,12 +344,18 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
             <div className="mb-1.5 flex shrink-0 items-start justify-between gap-2">
               <h3
                 style={{
-                  fontFamily: getFontFamilyCss(card.typography?.fontFamily),
-                  ['--kc-fx-color' as string]: card.typography?.effectColor ?? '#0f172a',
+                  fontFamily: getFontFamilyCss(titleStyle.fontFamily),
+                  fontSize: `${titleStyle.fontSize}px`,
+                  color: titleStyle.color || undefined,
+                  textAlign: titleStyle.textAlign,
+                  fontStyle: titleStyle.italic ? 'italic' : 'normal',
+                  textDecoration: titleStyle.underline ? 'underline' : 'none',
+                  ['--kc-fx-color' as string]: titleStyle.effectColor,
+                  ['--kc-fx-start' as string]: titleStyle.color || '#f4f4f5',
                 }}
                 className={cn(
-                  'line-clamp-2 text-[14.5px] font-bold leading-snug tracking-tight text-zinc-100',
-                  getTextEffectClass(card.typography?.textEffect)
+                  'min-w-0 flex-1 line-clamp-2 font-bold leading-snug tracking-tight text-zinc-100',
+                  getTextEffectClass(titleStyle.textEffect)
                 )}
               >
                 {card.title}

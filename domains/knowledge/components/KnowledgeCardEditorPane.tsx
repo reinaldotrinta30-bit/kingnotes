@@ -62,7 +62,7 @@ import {
   FullKnowledgeCard,
   LocalAttachment,
 } from '../types';
-import { DEFAULT_CARD_TYPOGRAPHY, resolveCardCallout } from '../utils/defaults';
+import { DEFAULT_CARD_TYPOGRAPHY, resolveCardCallout, resolveCardTitleStyle } from '../utils/defaults';
 import { getHierarchyBreadcrumb } from '../utils/hierarchyContext';
 import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryFactory';
 import { MathBlock } from '../extensions/MathBlock';
@@ -74,6 +74,10 @@ import { CalloutBadge } from '@/domains/canvas/components/CalloutBadge';
 import { StudyUnderlinePicker } from '@/domains/canvas/components/StudyUnderlinePicker';
 import { NotebookPickerModal } from './NotebookPickerModal';
 import { EditorInspectorPanel } from './EditorInspectorPanel';
+import { StudyFontMark } from '../extensions/StudyFontMark';
+import { StudyFontPicker } from '@/domains/canvas/components/StudyFontPicker';
+import { getFontFamilyCss } from '@/domains/canvas/utils/studyFonts';
+import { getTextEffectClass } from '@/domains/canvas/utils/studyFonts';
 
 const lowlight = createLowlight(common);
 
@@ -431,6 +435,8 @@ export function KnowledgeCardEditorPane({
       Highlight.configure({ multicolor: true }),
       StudyTapeMark,
       StudyUnderlineMark,
+      StudyFontMark,
+      StudyFontMark,
       TaskList,
       TaskItem.configure({ nested: true }),
       Table.configure({ resizable: true }),
@@ -610,6 +616,7 @@ export function KnowledgeCardEditorPane({
 
   const typoStyle = buildTypographyCssVars(fullCard.meta.typography, DEFAULT_CARD_TYPOGRAPHY);
   const callout = resolveCardCallout(fullCard.meta);
+  const titleStyle = resolveCardTitleStyle(fullCard.meta);
 
   const handleCreateQuickFlashcard = () => {
     if (!bubbleMenu || !quickFlashcardFront.trim()) return;
@@ -783,6 +790,7 @@ export function KnowledgeCardEditorPane({
         <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={iconBtn(editor.isActive('italic'))} title="Itálico (Ctrl+I)"><Italic className="h-3.5 w-3.5" /></button>
         <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={iconBtn(editor.isActive('underline'))} title="Sublinhado (Ctrl+U)"><UnderlineIcon className="h-3.5 w-3.5" /></button>
         <StudyUnderlinePicker editor={editor} />
+        <StudyFontPicker editor={editor} />
 
         {/* Cor do texto */}
         <div className="relative">
@@ -1156,7 +1164,19 @@ export function KnowledgeCardEditorPane({
                 setTitleDraft(e.target.value);
                 scheduleAutoSave();
               }}
-              className="mb-3 w-full bg-transparent text-2xl font-bold tracking-tight text-zinc-100 placeholder:text-zinc-600 focus:outline-none md:text-3xl"
+              style={{
+                fontFamily: getFontFamilyCss(titleStyle.fontFamily),
+                fontSize: `${Math.max(22, Math.round(titleStyle.fontSize * 1.45))}px`,
+                color: titleStyle.color || undefined,
+                textAlign: titleStyle.textAlign,
+                fontStyle: titleStyle.italic ? 'italic' : 'normal',
+                textDecoration: titleStyle.underline ? 'underline' : 'none',
+                ['--kc-fx-color' as string]: titleStyle.effectColor,
+                ['--kc-fx-start' as string]: titleStyle.color || '#f4f4f5',
+              }}
+              className={`mb-3 w-full bg-transparent font-bold leading-tight tracking-tight text-zinc-100 placeholder:text-zinc-600 focus:outline-none ${getTextEffectClass(
+                titleStyle.textEffect
+              )}`}
               placeholder="Título do Knowledge Card"
             />
 

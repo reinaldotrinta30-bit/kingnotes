@@ -1,5 +1,15 @@
 ﻿import type { Metadata } from 'next';
-import { Plus_Jakarta_Sans, Newsreader, JetBrains_Mono } from 'next/font/google';
+import {
+  Plus_Jakarta_Sans,
+  Newsreader,
+  JetBrains_Mono,
+  Caveat,
+  Patrick_Hand,
+  Kalam,
+  Pacifico,
+  Fredoka,
+  Architects_Daughter,
+} from 'next/font/google';
 import 'katex/dist/katex.min.css';
 import './globals.css';
 
@@ -21,6 +31,42 @@ const jetbrainsMono = JetBrains_Mono({
   weight: ['400', '500', '600'],
 });
 
+const caveat = Caveat({
+  subsets: ['latin'],
+  variable: '--font-hand-script',
+  weight: ['400', '500', '600', '700'],
+});
+
+const patrickHand = Patrick_Hand({
+  subsets: ['latin'],
+  variable: '--font-hand-print',
+  weight: '400',
+});
+
+const kalam = Kalam({
+  subsets: ['latin'],
+  variable: '--font-hand-marker',
+  weight: ['400', '700'],
+});
+
+const pacifico = Pacifico({
+  subsets: ['latin'],
+  variable: '--font-lettering-brush',
+  weight: '400',
+});
+
+const fredoka = Fredoka({
+  subsets: ['latin'],
+  variable: '--font-rounded',
+  weight: ['400', '500', '600', '700'],
+});
+
+const architectsDaughter = Architects_Daughter({
+  subsets: ['latin'],
+  variable: '--font-draft',
+  weight: '400',
+});
+
 export const metadata: Metadata = {
   title: 'Knowledge Canvas',
   description: 'Segundo cérebro visual permanente para estudos de alto nível',
@@ -34,7 +80,18 @@ export default function RootLayout({
   return (
     <html
       lang="pt-BR"
-      className={`${plusJakarta.variable} ${newsreader.variable} ${jetbrainsMono.variable} dark`}
+      className={[
+        plusJakarta.variable,
+        newsreader.variable,
+        jetbrainsMono.variable,
+        caveat.variable,
+        patrickHand.variable,
+        kalam.variable,
+        pacifico.variable,
+        fredoka.variable,
+        architectsDaughter.variable,
+        'dark',
+      ].join(' ')}
     >
       <body className="font-sans antialiased bg-[#0F1115] text-zinc-100 selection:bg-indigo-500/30">
         {children}

@@ -2,6 +2,11 @@
 
 import React, { useMemo, useState } from 'react';
 import {
+  EFFECT_COLOR_SWATCHES,
+  STUDY_FONT_OPTIONS,
+  TEXT_EFFECT_OPTIONS,
+} from '@/domains/canvas/utils/studyFonts';
+import {
   Palette,
   Type,
   Sparkles,
@@ -497,6 +502,83 @@ export function EditorInspectorPanel({
 
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs">
+                  <div className="space-y-1.5">
+                <span className="block text-[11px] text-zinc-400">Estilo de fonte</span>
+                <div className="grid grid-cols-3 gap-1">
+                  {STUDY_FONT_OPTIONS.map((font) => (
+                    <button
+                      key={font.id}
+                      type="button"
+                      onClick={() =>
+                        updateCardMeta(meta.id, {
+                          typography: resolveTypography(
+                            { ...typo, fontFamily: font.id },
+                            DEFAULT_CARD_TYPOGRAPHY
+                          ),
+                        })
+                      }
+                      style={{ fontFamily: font.cssFamily }}
+                      className={`truncate rounded-lg border px-1.5 py-1 text-[11px] transition ${
+                        typo.fontFamily === font.id
+                          ? 'border-indigo-500 bg-indigo-600/20 text-indigo-100'
+                          : 'border-zinc-800 bg-[#0F1115] text-zinc-300 hover:border-zinc-700'
+                      }`}
+                    >
+                      {font.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <span className="block text-[11px] text-zinc-400">Efeito no título</span>
+                <div className="grid grid-cols-3 gap-1">
+                  {TEXT_EFFECT_OPTIONS.map((fx) => (
+                    <button
+                      key={fx.id}
+                      type="button"
+                      onClick={() =>
+                        updateCardMeta(meta.id, {
+                          typography: resolveTypography(
+                            { ...typo, textEffect: fx.id },
+                            DEFAULT_CARD_TYPOGRAPHY
+                          ),
+                        })
+                      }
+                      className={`rounded-lg border py-1 text-[10.5px] font-medium transition ${
+                        typo.textEffect === fx.id
+                          ? 'border-amber-500/70 bg-amber-500/15 text-amber-200'
+                          : 'border-zinc-800 bg-[#0F1115] text-zinc-400 hover:text-zinc-200'
+                      }`}
+                    >
+                      {fx.label}
+                    </button>
+                  ))}
+                </div>
+                {typo.textEffect !== 'none' && (
+                  <div className="flex items-center gap-1.5 pt-1">
+                    {EFFECT_COLOR_SWATCHES.map((sw) => (
+                      <button
+                        key={sw.hex}
+                        type="button"
+                        title={sw.label}
+                        onClick={() =>
+                          updateCardMeta(meta.id, {
+                            typography: resolveTypography(
+                              { ...typo, effectColor: sw.hex },
+                              DEFAULT_CARD_TYPOGRAPHY
+                            ),
+                          })
+                        }
+                        className={`h-4 w-4 rounded-full border transition hover:scale-125 ${
+                          typo.effectColor === sw.hex ? 'scale-110 border-white' : 'border-zinc-700'
+                        }`}
+                        style={{ backgroundColor: sw.hex }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
                   <span className="text-zinc-400">Tamanho da fonte</span>
                   <div className="flex items-center gap-1">
                     <button

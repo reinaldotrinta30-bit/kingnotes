@@ -28,6 +28,7 @@ import { MathBlock } from '@/domains/knowledge/extensions/MathBlock';
 import { MermaidBlock } from '@/domains/knowledge/extensions/MermaidBlock';
 import { WikiLinkNode } from '@/domains/knowledge/extensions/WikiLinkNode';
 import { StudyTapeMark } from '@/domains/knowledge/extensions/StudyTapeMark';
+import { StudyUnderlineMark } from '@/domains/knowledge/extensions/StudyUnderlineMark';
 import { buildTypographyCssVars } from '@/domains/canvas/components/CardRichPreview';
 import { CalloutBadge } from '@/domains/canvas/components/CalloutBadge';
 
@@ -124,6 +125,7 @@ export function BookCardReader({
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Highlight.configure({ multicolor: true }),
       StudyTapeMark,
+      StudyUnderlineMark,
       TaskList,
       TaskItem.configure({ nested: true }),
       Table.configure({ resizable: false }),

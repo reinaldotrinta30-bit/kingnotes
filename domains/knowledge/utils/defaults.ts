@@ -12,18 +12,27 @@ export const TYPOGRAPHY_LIMITS = {
 } as const;
 
 export const DEFAULT_CARD_TYPOGRAPHY: Required<TextTypographyConfig> = {
+  fontFamily: 'default',
+  textEffect: 'none',
+  effectColor: '#0f172a',
   fontSize: 13,
   lineHeight: 1.55,
   paragraphSpacing: 6,
 };
 
 export const DEFAULT_TEXT_TYPOGRAPHY: Required<TextTypographyConfig> = {
+  fontFamily: 'default',
+  textEffect: 'none',
+  effectColor: '#0f172a',
   fontSize: 15,
   lineHeight: 1.48,
   paragraphSpacing: 6,
 };
 
 export const DEFAULT_TOPIC_TYPOGRAPHY: Required<TextTypographyConfig> = {
+  fontFamily: 'default',
+  textEffect: 'none',
+  effectColor: '#0f172a',
   fontSize: 15,
   lineHeight: 1.3,
   paragraphSpacing: 4,
@@ -43,28 +52,32 @@ export function resolveTypography(
   const rawLine = typography?.lineHeight ?? defaults.lineHeight;
   const rawSpace = typography?.paragraphSpacing ?? defaults.paragraphSpacing;
 
-  return {
-    fontSize: Math.round(
-      clampNumber(rawFont, TYPOGRAPHY_LIMITS.fontSize.min, TYPOGRAPHY_LIMITS.fontSize.max, defaults.fontSize)
-    ),
-    lineHeight:
-      Math.round(
-        clampNumber(
-          rawLine,
-          TYPOGRAPHY_LIMITS.lineHeight.min,
-          TYPOGRAPHY_LIMITS.lineHeight.max,
-          defaults.lineHeight
-        ) * 100
-      ) / 100,
-    paragraphSpacing: Math.round(
+ return {
+  fontSize: Math.round(
+    clampNumber(rawFont, TYPOGRAPHY_LIMITS.fontSize.min, TYPOGRAPHY_LIMITS.fontSize.max, defaults.fontSize)
+  ),
+  lineHeight:
+    Math.round(
       clampNumber(
-        rawSpace,
-        TYPOGRAPHY_LIMITS.paragraphSpacing.min,
-        TYPOGRAPHY_LIMITS.paragraphSpacing.max,
-        defaults.paragraphSpacing
-      )
-    ),
-  };
+        rawLine,
+        TYPOGRAPHY_LIMITS.lineHeight.min,
+        TYPOGRAPHY_LIMITS.lineHeight.max,
+        defaults.lineHeight
+      ) * 100
+    ) / 100,
+  paragraphSpacing: Math.round(
+    clampNumber(
+      rawSpace,
+      TYPOGRAPHY_LIMITS.paragraphSpacing.min,
+      TYPOGRAPHY_LIMITS.paragraphSpacing.max,
+      defaults.paragraphSpacing
+    )
+  ),
+
+  fontFamily: typography?.fontFamily ?? defaults.fontFamily,
+textEffect: typography?.textEffect ?? defaults.textEffect,
+effectColor: typography?.effectColor ?? defaults.effectColor,
+};
 }
 
 export const DEFAULT_CALLOUT_CONFIG: Required<

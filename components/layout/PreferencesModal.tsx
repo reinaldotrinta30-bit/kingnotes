@@ -153,6 +153,7 @@ export function PreferencesModal() {
                   [
                     { id: 'dots', label: 'Pontos' },
                     { id: 'grid', label: 'Grade' },
+                    { id: 'lined', label: 'Caderno' },
                     { id: 'none', label: 'Liso' },
                   ] as Array<{ id: CanvasBackgroundStyle; label: string }>
                 ).map((opt) => (

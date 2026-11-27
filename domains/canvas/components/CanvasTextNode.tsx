@@ -11,6 +11,9 @@ import { Color } from '@tiptap/extension-color';
 import { TextAlign } from '@tiptap/extension-text-align';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
+import { StudyUnderlineMark } from '@/domains/knowledge/extensions/StudyUnderlineMark';
+import { StudyUnderlinePicker } from './StudyUnderlinePicker';
+import { getFontFamilyCss, getTextEffectClass } from '../utils/studyFonts';
 import {
   Bold,
   Italic,
@@ -124,6 +127,7 @@ function FreeTextInlineEditor({
       TaskList,
       TaskItem.configure({ nested: true }),
       StudyTapeMark,
+      StudyUnderlineMark,
     ],
     content: node.textJson ?? { type: 'doc', content: [{ type: 'paragraph' }] },
     editorProps: {
@@ -217,6 +221,7 @@ function FreeTextInlineEditor({
         <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={btn(editor.isActive('bold'))} title="Negrito (Ctrl+B)"><Bold className="h-3.5 w-3.5" /></button>
         <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={btn(editor.isActive('italic'))} title="Itálico (Ctrl+I)"><Italic className="h-3.5 w-3.5" /></button>
         <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={btn(editor.isActive('underline'))} title="Sublinhado (Ctrl+U)"><UnderlineIcon className="h-3.5 w-3.5" /></button>
+        <StudyUnderlinePicker editor={editor} />
         <button type="button" onClick={() => editor.chain().focus().toggleStrike().run()} className={btn(editor.isActive('strike'))} title="Tachado"><Strikethrough className="h-3.5 w-3.5" /></button>
 
         {/* Tipografia completa em tempo real */}
@@ -472,6 +477,9 @@ export const CanvasTextNode = memo(function CanvasTextNode({
         }}
         style={{
           ...typoVars,
+          fontFamily: getFontFamilyCss(resolvedTypo.fontFamily),
+          ['--kc-fx-color' as string]: resolvedTypo.effectColor,
+          ['--kc-fx-start' as string]: node.textColor || defaultTextColor,
           backgroundColor: bgStyleColor,
           borderWidth,
           borderStyle: borderStyle === 'none' ? 'solid' : borderStyle,
@@ -509,7 +517,7 @@ export const CanvasTextNode = memo(function CanvasTextNode({
         ) : hasContent ? (
           <RichDocRenderer
             doc={node.textJson}
-            className="kc-free-text-prose"
+            className={`kc-free-text-prose ${getTextEffectClass(resolvedTypo.textEffect)}`}
             typography={node.typography}
             legacyFontSize={node.fontSize}
           />

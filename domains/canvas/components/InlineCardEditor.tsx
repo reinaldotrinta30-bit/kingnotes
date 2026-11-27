@@ -19,6 +19,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import Image from '@tiptap/extension-image';
 import { common, createLowlight } from 'lowlight';
+import { StudyUnderlinePicker } from './StudyUnderlinePicker';
 import {
   Bold,
   Italic,
@@ -45,6 +46,7 @@ import { MathBlock } from '@/domains/knowledge/extensions/MathBlock';
 import { MermaidBlock } from '@/domains/knowledge/extensions/MermaidBlock';
 import { WikiLinkNode, extractOutgoingLinkIds } from '@/domains/knowledge/extensions/WikiLinkNode';
 import { StudyTapeMark } from '@/domains/knowledge/extensions/StudyTapeMark';
+import { StudyUnderlineMark } from '@/domains/knowledge/extensions/StudyUnderlineMark';
 import { buildTypographyCssVars, setCardPreviewCache } from './CardRichPreview';
 import { TypographyPopover } from './TypographyPopover';
 import { CalloutCustomizerPopover } from './CalloutCustomizerPopover';
@@ -157,6 +159,7 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Highlight.configure({ multicolor: true }),
       StudyTapeMark,
+      StudyUnderlineMark,
       TaskList,
       TaskItem.configure({ nested: true }),
       Table.configure({ resizable: true }),
@@ -298,6 +301,7 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
           <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={`rounded-lg p-1.5 ${editor.isActive('bold') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Negrito"><Bold className="h-3.5 w-3.5" /></button>
           <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={`rounded-lg p-1.5 ${editor.isActive('italic') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Itálico"><Italic className="h-3.5 w-3.5" /></button>
           <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={`rounded-lg p-1.5 ${editor.isActive('underline') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Sublinhado"><UnderlineIcon className="h-3.5 w-3.5" /></button>
+          <StudyUnderlinePicker editor={editor} />
 
           {/* Tipografia (Fonte, Entrelinha e Parágrafos) */}
           <TypographyPopover

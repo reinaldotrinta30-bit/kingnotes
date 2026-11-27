@@ -2303,7 +2303,7 @@ function CanvasInner() {
         maxZoom={2.5}
         proOptions={{ hideAttribution: true }}
       >
-        {preferences.canvasBackground !== 'none' && (
+        {(preferences.canvasBackground === 'dots' || preferences.canvasBackground === 'grid') && (
           <Background
             bgColor={canvasBgHex}
             variant={
@@ -2315,6 +2315,38 @@ function CanvasInner() {
             size={preferences.canvasBackground === 'grid' ? 1 : 1.3}
             color={patternColor}
           />
+        )}
+
+        {preferences.canvasBackground === 'lined' && (
+          <svg
+            className="react-flow__background pointer-events-none absolute inset-0 h-full w-full"
+            style={{ backgroundColor: canvasBgHex }}
+          >
+            <defs>
+              <pattern
+                id="kc-notebook-pautado"
+                x={liveViewport.x}
+                y={liveViewport.y}
+                width={Math.max(12, 32 * liveViewport.zoom)}
+                height={Math.max(12, 32 * liveViewport.zoom)}
+                patternUnits="userSpaceOnUse"
+              >
+                <line
+                  x1="0"
+                  y1={Math.max(12, 32 * liveViewport.zoom)}
+                  x2={Math.max(12, 32 * liveViewport.zoom)}
+                  y2={Math.max(12, 32 * liveViewport.zoom)}
+                  stroke={
+                    theme === 'paper'
+                      ? 'rgba(96, 165, 250, 0.30)'
+                      : 'rgba(148, 163, 184, 0.13)'
+                  }
+                  strokeWidth={1}
+                />
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#kc-notebook-pautado)" />
+          </svg>
         )}
 
         <MiniMap

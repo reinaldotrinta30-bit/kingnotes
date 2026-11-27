@@ -19,6 +19,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import Image from '@tiptap/extension-image';
 import { common, createLowlight } from 'lowlight';
+import { StudyUnderlineMark } from '../extensions/StudyUnderlineMark';
 import {
   Bold,
   Italic,
@@ -70,6 +71,7 @@ import { WikiLinkNode, extractOutgoingLinkIds } from '../extensions/WikiLinkNode
 import { StudyTapeMark } from '../extensions/StudyTapeMark';
 import { buildTypographyCssVars, setCardPreviewCache } from '@/domains/canvas/components/CardRichPreview';
 import { CalloutBadge } from '@/domains/canvas/components/CalloutBadge';
+import { StudyUnderlinePicker } from '@/domains/canvas/components/StudyUnderlinePicker';
 import { NotebookPickerModal } from './NotebookPickerModal';
 import { EditorInspectorPanel } from './EditorInspectorPanel';
 
@@ -428,6 +430,7 @@ export function KnowledgeCardEditorPane({
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Highlight.configure({ multicolor: true }),
       StudyTapeMark,
+      StudyUnderlineMark,
       TaskList,
       TaskItem.configure({ nested: true }),
       Table.configure({ resizable: true }),
@@ -779,6 +782,7 @@ export function KnowledgeCardEditorPane({
         <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={iconBtn(editor.isActive('bold'))} title="Negrito (Ctrl+B)"><Bold className="h-3.5 w-3.5" /></button>
         <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={iconBtn(editor.isActive('italic'))} title="Itálico (Ctrl+I)"><Italic className="h-3.5 w-3.5" /></button>
         <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={iconBtn(editor.isActive('underline'))} title="Sublinhado (Ctrl+U)"><UnderlineIcon className="h-3.5 w-3.5" /></button>
+        <StudyUnderlinePicker editor={editor} />
 
         {/* Cor do texto */}
         <div className="relative">

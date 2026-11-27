@@ -8,6 +8,7 @@ import { DEFAULT_TOPIC_TYPOGRAPHY, resolveTypography } from '@/domains/knowledge
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
 import { useUiStore } from '@/domains/ui/store/useUiStore';
 import { hexToRgbaString } from '../utils/contrast';
+import { getFontFamilyCss, getTextEffectClass } from '../utils/studyFonts';
 
 const HANDLES = [
   { pos: Position.Top, id: 'top' },
@@ -272,6 +273,9 @@ export const CanvasTopicNode = memo(function CanvasTopicNode({
           color: textColor,
           fontSize: `${typo.fontSize}px`,
           lineHeight: typo.lineHeight,
+          fontFamily: getFontFamilyCss(typo.fontFamily),
+          ['--kc-fx-color' as string]: typo.effectColor,
+          ['--kc-fx-start' as string]: textColor,
         }}
         className={`relative z-10 flex w-full flex-col justify-center ${alignClass} ${
           shape === 'diamond'
@@ -312,7 +316,7 @@ export const CanvasTopicNode = memo(function CanvasTopicNode({
         ) : (
           <div className="flex max-w-full items-center justify-center gap-1.5 font-semibold tracking-tight">
             {icon && <span className="shrink-0 text-[1.05em] leading-none">{icon}</span>}
-            <span className="whitespace-pre-wrap break-words">
+            <span className={`whitespace-pre-wrap break-words ${getTextEffectClass(typo.textEffect)}`}>
               {node.label || 'Duplo clique...'}
             </span>
           </div>

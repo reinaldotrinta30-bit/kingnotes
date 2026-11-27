@@ -577,6 +577,7 @@ html.paper .kc-paper-cornell {
 .kc-inline-prose {
   font-size: 13px !important;
   line-height: 1.62 !important;
+  font-family: var(--kc-font-family, inherit) !important;
 }
 
 /* ============================================================================
@@ -704,6 +705,7 @@ html[data-custom-font="active"] .book-prose {
 
 html[data-custom-font="active"] .kc-free-text-prose {
   font-family: var(--kc-custom-font), var(--font-sans), sans-serif !important;
+  font-family: var(--kc-font-family, inherit) !important;
 }
 
 /* ============================================================================
@@ -777,4 +779,74 @@ html.paper {
     page-break-inside: avoid;
     break-inside: avoid;
   }
+}
+
+/* ============================================================================
+   ETAPA B — EFEITOS DE LETTERING & SUBLINHADOS COLORIDOS DE CADERNO
+   ============================================================================ */
+.kc-fx-outline {
+  -webkit-text-stroke: 3px var(--kc-fx-color, #0f172a);
+  paint-order: stroke fill;
+  text-shadow: 2px 3px 0 var(--kc-fx-color, #0f172a);
+}
+
+.kc-fx-shadow3d {
+  text-shadow:
+    1px 1px 0 var(--kc-fx-color, #1e1b4b),
+    2px 2px 0 var(--kc-fx-color, #1e1b4b),
+    3px 3px 0 var(--kc-fx-color, #1e1b4b),
+    4px 4px 0 var(--kc-fx-color, #1e1b4b);
+}
+
+.kc-fx-gradient {
+  background-image: linear-gradient(
+    135deg,
+    var(--kc-fx-start, #6366f1) 0%,
+    var(--kc-fx-color, #06b6d4) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.kc-fx-glow {
+  text-shadow:
+    0 0 10px color-mix(in srgb, var(--kc-fx-color, #6366f1) 70%, transparent),
+    0 0 22px color-mix(in srgb, var(--kc-fx-color, #6366f1) 45%, transparent);
+}
+
+/* Sublinhados coloridos estilo caderno / mapa mental */
+.kc-ul {
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.kc-ul-brush {
+  background-image: linear-gradient(
+    to bottom,
+    transparent 68%,
+    color-mix(in srgb, var(--kc-ul-color, #ef4444) 85%, transparent) 68%,
+    color-mix(in srgb, var(--kc-ul-color, #ef4444) 85%, transparent) 96%,
+    transparent 96%
+  );
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+.kc-ul-wavy {
+  text-decoration: underline wavy var(--kc-ul-color, #ef4444);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
+.kc-ul-double {
+  text-decoration: underline double var(--kc-ul-color, #ef4444);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 4px;
+}
+
+.kc-ul-dashed {
+  text-decoration: underline dashed var(--kc-ul-color, #ef4444);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
 }

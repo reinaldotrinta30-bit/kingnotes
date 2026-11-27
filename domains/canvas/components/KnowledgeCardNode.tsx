@@ -18,6 +18,7 @@ import { InlineCardEditor } from './InlineCardEditor';
 import { CardRichPreview } from './CardRichPreview';
 import { CalloutBadge } from './CalloutBadge';
 import { cn } from '@/lib/utils';
+import { getFontFamilyCss, getTextEffectClass } from '../utils/studyFonts';
 
 const COLOR_ACCENT: Record<KnowledgeCardMeta['color'], string> = {
   default: 'border-zinc-800/90 bg-[#161920]/95 hover:border-zinc-600/90',
@@ -340,7 +341,16 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
           <div className={cn('flex min-h-0 flex-1 flex-col', !isAutoSize && 'overflow-hidden')}>
             {/* Cabeçalho do Card */}
             <div className="mb-1.5 flex shrink-0 items-start justify-between gap-2">
-              <h3 className="line-clamp-2 text-[14.5px] font-bold leading-snug tracking-tight text-zinc-100">
+              <h3
+                style={{
+                  fontFamily: getFontFamilyCss(card.typography?.fontFamily),
+                  ['--kc-fx-color' as string]: card.typography?.effectColor ?? '#0f172a',
+                }}
+                className={cn(
+                  'line-clamp-2 text-[14.5px] font-bold leading-snug tracking-tight text-zinc-100',
+                  getTextEffectClass(card.typography?.textEffect)
+                )}
+              >
                 {card.title}
               </h3>
               <div className="flex shrink-0 items-center gap-1 text-zinc-400">

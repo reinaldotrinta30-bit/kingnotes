@@ -3,7 +3,7 @@ import { applyCustomFontToDom, hydrateCustomFonts } from '../utils/customFonts';
 
 export type CanvasSpotlightMode = 'none' | 'due' | 'critical' | 'pinned' | 'favorites';
 export type CardDensity = 'compact' | 'comfortable' | 'expanded';
-export type CanvasBackgroundStyle = 'dots' | 'grid' | 'none';
+export type CanvasBackgroundStyle = 'dots' | 'grid' | 'lined' | 'none';
 export type BookWidth = 'narrow' | 'medium' | 'wide';
 export type BookFont = 'serif' | 'sans';
 export type BookFontSize = 'sm' | 'base' | 'lg';

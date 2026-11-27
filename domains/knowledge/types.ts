@@ -22,11 +22,26 @@ export interface HierarchyScope {
   topicId?: string | null;
 }
 
-/** Formatação tipográfica por elemento */
+export type StudyFontId =
+  | 'default'
+  | 'hand-print'
+  | 'hand-script'
+  | 'hand-marker'
+  | 'lettering-brush'
+  | 'rounded'
+  | 'draft'
+  | 'serif'
+  | 'mono';
+
+export type TextEffectId = 'none' | 'outline' | 'shadow3d' | 'gradient' | 'glow';
+
 export interface TextTypographyConfig {
-  fontSize?: number;         // px (11 a 48)
-  lineHeight?: number;       // multiplicador (1.1 a 2.4)
-  paragraphSpacing?: number; // px (0 a 28)
+  fontSize?: number;
+  lineHeight?: number;
+  paragraphSpacing?: number;
+  fontFamily?: StudyFontId;
+  textEffect?: TextEffectId;
+  effectColor?: string;
 }
 
 /** Observação Rápida / Pegadinha da Banca personalizável */

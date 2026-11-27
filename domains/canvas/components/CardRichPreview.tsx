@@ -12,6 +12,7 @@ import {
 import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryFactory';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
 import { ClozeText } from '@/domains/review/components/ClozeText';
+import { getFontFamilyCss } from '../utils/studyFonts';
 
 interface TipTapMark {
   type: string;
@@ -42,6 +43,8 @@ export function buildTypographyCssVars(
     ['--kc-font-size' as string]: `${resolved.fontSize}px`,
     ['--kc-line-height' as string]: String(resolved.lineHeight),
     ['--kc-p-spacing' as string]: `${resolved.paragraphSpacing}px`,
+    ['--kc-font-family' as string]: getFontFamilyCss(resolved.fontFamily),
+    ['--kc-fx-color' as string]: resolved.effectColor,
   };
 }
 
@@ -158,10 +161,29 @@ function renderMarks(text: string, marks?: TipTapMark[]): React.ReactNode {
         break;
       default:
         break;
+        case 'studyUnderline': {
+        const ulColor = (mark.attrs?.color as string | undefined) || '#ef4444';
+        const variant = (mark.attrs?.variant as string | undefined) || 'brush';
+        node = (
+          <span
+            className={`kc-ul kc-ul-${variant}`}
+            style={{ ['--kc-ul-color' as string]: ulColor }}
+          >
+            {node}
+          </span>
+        );
+        break;
+      }
     }
+    
   }
+  
   return node;
+   
+  
+
 }
+
 
 function renderTipTapNode(node: TipTapNode, key: string): React.ReactNode {
   const children = node.content?.map((child, idx) => renderTipTapNode(child, `${key}-${idx}`));

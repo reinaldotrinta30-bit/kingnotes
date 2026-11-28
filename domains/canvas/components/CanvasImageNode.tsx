@@ -1,8 +1,14 @@
 'use client';
 
 import React, { memo, useEffect, useRef, useState } from 'react';
-import { Handle, Position, NodeProps, NodeResizer } from '@xyflow/react';
-import { Image as ImageIcon, Check, RotateCcw, ZoomIn } from 'lucide-react';
+import {
+  Handle,
+  Position,
+  NodeProps,
+  NodeResizer,
+  useUpdateNodeInternals,
+} from '@xyflow/react';
+import { Image as ImageIcon, Check, RotateCcw, ZoomIn, Plus } from 'lucide-react';
 import { CanvasNodePosition } from '@/domains/knowledge/types';
 import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryFactory';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
@@ -30,6 +36,9 @@ const RADIUS_CLASS: Record<NonNullable<CanvasNodePosition['borderRadius']>, stri
   full: 'rounded-full',
 };
 
+type CaptionPosition = NonNullable<CanvasNodePosition['captionPosition']>;
+type CaptionSlot = 'main' | 'top';
+
 interface CanvasImageNodeData {
   node: CanvasNodePosition;
 }
@@ -39,18 +48,23 @@ export const CanvasImageNode = memo(function CanvasImageNode({
   data,
   selected,
 }: NodeProps & { data: CanvasImageNodeData }) {
+  const updateNodeInternals = useUpdateNodeInternals();
   const persistNodePositions = useKnowledgeStore((s) => s.persistNodePositions);
   const updateCanvasNode = useKnowledgeStore((s) => s.updateCanvasNode);
   const { croppingImageNodeId, setCroppingImageNodeId } = useUiStore();
   const { node } = data;
 
   const isCropping = croppingImageNodeId === id;
+  const captionPosition: CaptionPosition = node.captionPosition ?? 'bottom';
+  const isHorizontal = captionPosition === 'left' || captionPosition === 'right';
+  const isSplitTopBottom = captionPosition === 'top-bottom';
 
   const [imgUrl, setImgUrl] = useState<string | null>(() =>
     node.blobId ? blobUrlCache.get(node.blobId) ?? null : null
   );
-  const [editingCaption, setEditingCaption] = useState(false);
-  const [captionDraft, setCaptionDraft] = useState(node.caption ?? '');
+  const [editingSlot, setEditingSlot] = useState<CaptionSlot | null>(null);
+  const [mainDraft, setMainDraft] = useState(node.caption ?? '');
+  const [topDraft, setTopDraft] = useState(node.captionTop ?? '');
 
   // Estado local suave durante o arraste do corte/enquadramento
   const [liveCrop, setLiveCrop] = useState({
@@ -77,8 +91,17 @@ export const CanvasImageNode = memo(function CanvasImageNode({
   }, [node.cropZoom, node.cropX, node.cropY]);
 
   useEffect(() => {
-    setCaptionDraft(node.caption ?? '');
-  }, [node.caption]);
+    if (editingSlot !== 'main') setMainDraft(node.caption ?? '');
+  }, [node.caption, editingSlot]);
+
+  useEffect(() => {
+    if (editingSlot !== 'top') setTopDraft(node.captionTop ?? '');
+  }, [node.captionTop, editingSlot]);
+
+  useEffect(() => {
+    const t = setTimeout(() => updateNodeInternals(id), 35);
+    return () => clearTimeout(t);
+  }, [id, captionPosition, node.caption, node.captionTop, editingSlot, updateNodeInternals]);
 
   // Sai do modo corte se a imagem perder seleção
   useEffect(() => {
@@ -113,7 +136,7 @@ export const CanvasImageNode = memo(function CanvasImageNode({
   const borderStyle = node.borderStyle ?? 'solid';
   const borderWidth = borderStyle === 'none' ? 0 : BORDER_WIDTH_PX[node.borderWidth ?? 'thin'];
   const borderColor = node.color ?? '#3f3f46';
-  const radiusClass = RADIUS_CLASS[node.borderRadius ?? 'xl'];
+  const rawRadiusClass = RADIUS_CLASS[node.borderRadius ?? 'xl'];
   const fitClass =
     node.imageFit === 'fill'
       ? 'object-fill'
@@ -126,12 +149,55 @@ export const CanvasImageNode = memo(function CanvasImageNode({
   const flipY = node.flipY ? -1 : 1;
   const opacity = node.opacity ?? 1;
 
-  const commitCaption = () => {
-    setEditingCaption(false);
-    const clean = captionDraft.trim();
+  const hasMainCaption = Boolean((node.caption ?? '').trim());
+  const hasTopCaption = Boolean((node.captionTop ?? '').trim());
+
+  const showTopBlock =
+    !isCropping &&
+    ((captionPosition === 'top' && (hasMainCaption || editingSlot === 'main')) ||
+      (isSplitTopBottom && (hasTopCaption || editingSlot === 'top' || selected)));
+
+  const showBottomBlock =
+    !isCropping &&
+    ((captionPosition === 'bottom' && (hasMainCaption || editingSlot === 'main')) ||
+      (isSplitTopBottom && (hasMainCaption || editingSlot === 'main' || selected)));
+
+  const showLeftBlock =
+    !isCropping && captionPosition === 'left' && (hasMainCaption || editingSlot === 'main');
+
+  const showRightBlock =
+    !isCropping && captionPosition === 'right' && (hasMainCaption || editingSlot === 'main');
+
+  const hasAnyVisibleCaption =
+    showTopBlock || showBottomBlock || showLeftBlock || showRightBlock;
+
+  // Se o usuário usar recorte circular ("full") junto com legenda, mantém a legenda legível sem cortar cantos
+  const outerRadiusClass =
+    node.borderRadius === 'full' && hasAnyVisibleCaption ? 'rounded-2xl' : rawRadiusClass;
+  const imageWrapRadiusClass =
+    node.borderRadius === 'full' && hasAnyVisibleCaption ? 'rounded-full' : '';
+
+  const effectiveTextAlign = node.textAlign ?? (isHorizontal ? 'left' : 'center');
+
+  const commitSlot = (slot: CaptionSlot) => {
+    setEditingSlot(null);
+    if (slot === 'top') {
+      const clean = topDraft.trim();
+      if (clean !== (node.captionTop ?? '')) {
+        updateCanvasNode(id, { captionTop: clean });
+      }
+      return;
+    }
+    const clean = mainDraft.trim();
     if (clean !== (node.caption ?? '')) {
       updateCanvasNode(id, { caption: clean });
     }
+  };
+
+  const cancelSlot = (slot: CaptionSlot) => {
+    setEditingSlot(null);
+    if (slot === 'top') setTopDraft(node.captionTop ?? '');
+    else setMainDraft(node.caption ?? '');
   };
 
   // Arraste interno para mover o enquadramento no modo Cortar
@@ -191,22 +257,141 @@ export const CanvasImageNode = memo(function CanvasImageNode({
     updateCanvasNode(id, { imageFit: 'cover', cropZoom: nextZoom });
   };
 
+  const renderCaptionBlock = (
+    slot: CaptionSlot,
+    placement: 'top' | 'bottom' | 'left' | 'right'
+  ) => {
+    const isEditingThis = editingSlot === slot;
+    const textValue = slot === 'top' ? node.captionTop ?? '' : node.caption ?? '';
+    const draftValue = slot === 'top' ? topDraft : mainDraft;
+    const setDraftValue = slot === 'top' ? setTopDraft : setMainDraft;
+    const hasText = Boolean(textValue.trim());
+
+    const edgeBorderClass =
+      placement === 'top'
+        ? 'border-b border-zinc-800/75'
+        : placement === 'bottom'
+        ? 'border-t border-zinc-800/75'
+        : placement === 'left'
+        ? 'border-r border-zinc-800/75'
+        : 'border-l border-zinc-800/75';
+
+    const sizeClass =
+      placement === 'left' || placement === 'right'
+        ? 'w-[42%] min-w-[112px] max-w-[280px] h-full flex flex-col justify-center'
+        : isSplitTopBottom
+        ? 'w-full max-h-[34%]'
+        : 'w-full max-h-[45%]';
+
+    // Em modo Topo + Embaixo, se um dos lados ainda estiver vazio, mostra gatilho sutil apenas enquanto selecionado
+    if (!isEditingThis && !hasText) {
+      return (
+        <div
+          className={`nodrag shrink-0 ${edgeBorderClass} bg-[#161920]/75 px-2.5 py-1 text-center`}
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditingSlot(slot);
+            }}
+            className="inline-flex items-center gap-1 text-[10.5px] font-medium text-zinc-400 transition hover:text-indigo-300"
+          >
+            <Plus className="h-3 w-3" />
+            {slot === 'top' ? 'Adicionar texto acima' : 'Adicionar texto abaixo'}
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        onClick={(e) => {
+          if (isEditingThis) e.stopPropagation();
+        }}
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          if (!isEditingThis) setEditingSlot(slot);
+        }}
+        className={`kc-no-scrollbar nodrag shrink-0 overflow-y-auto ${edgeBorderClass} ${sizeClass} bg-[#161920]/92 px-3 py-2 ${
+          isEditingThis ? 'nowheel' : ''
+        }`}
+      >
+        {isEditingThis ? (
+          <div className="flex flex-col gap-1.5">
+            <textarea
+              autoFocus
+              rows={placement === 'left' || placement === 'right' ? 4 : 3}
+              value={draftValue}
+              onChange={(e) => setDraftValue(e.target.value)}
+              onBlur={() => commitSlot(slot)}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                  e.preventDefault();
+                  commitSlot(slot);
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  cancelSlot(slot);
+                }
+              }}
+              style={{ textAlign: effectiveTextAlign }}
+              placeholder={
+                slot === 'top'
+                  ? 'Escreva o texto acima da imagem...'
+                  : 'Escreva uma legenda ou parágrafos...'
+              }
+              className="nodrag nowheel w-full resize-none bg-transparent text-[12px] leading-relaxed text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
+            />
+            <div className="flex items-center justify-between gap-2 border-t border-zinc-800/70 pt-1">
+              <span className="text-[9.5px] text-zinc-500">
+                Enter: linha • Ctrl+Enter: salvar
+              </span>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  commitSlot(slot);
+                }}
+                className="flex items-center gap-0.5 rounded-md bg-emerald-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-emerald-500"
+              >
+                <Check className="h-3 w-3" /> OK
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p
+            style={{ textAlign: effectiveTextAlign }}
+            title="Duplo clique para editar legenda"
+            className="cursor-text whitespace-pre-wrap break-words text-[12px] font-medium leading-relaxed text-zinc-200"
+          >
+            {textValue}
+          </p>
+        )}
+      </div>
+    );
+  };
+
   return (
     /* Raiz SEM overflow-hidden para nunca cortar os ganchos de conexão */
     <div
-      className={`group relative flex h-full w-full flex-col ${radiusClass} transition-shadow ${
+      className={`group relative flex h-full w-full flex-col ${outerRadiusClass} transition-shadow ${
         isCropping
           ? 'ring-2 ring-amber-400 shadow-2xl shadow-amber-500/20'
           : selected
           ? 'ring-2 ring-indigo-500 shadow-indigo-500/20'
+          : borderStyle === 'none' && !hasAnyVisibleCaption
+          ? ''
           : 'hover:shadow-2xl'
       }`}
     >
       <NodeResizer
         isVisible={selected}
         keepAspectRatio={Boolean(node.keepAspectRatio)}
-        minWidth={80}
-        minHeight={60}
+        minWidth={isHorizontal && hasAnyVisibleCaption ? 220 : 80}
+        minHeight={hasAnyVisibleCaption ? 96 : 60}
         lineClassName={isCropping ? '!border-amber-400' : '!border-indigo-500'}
         handleClassName={
           isCropping
@@ -249,15 +434,28 @@ export const CanvasImageNode = memo(function CanvasImageNode({
           </React.Fragment>
         ))}
 
-      {/* Container interno com borda e recorte (overflow-hidden só aqui dentro) */}
+      {/* Container interno com borda, recorte e layout adaptativo da legenda */}
       <div
         style={{
           borderWidth,
           borderStyle: borderStyle === 'none' ? 'solid' : borderStyle,
           borderColor: borderStyle === 'none' ? 'transparent' : borderColor,
         }}
-        className={`flex h-full w-full flex-col overflow-hidden ${radiusClass} bg-[#161920]/70 shadow-xl backdrop-blur-sm`}
+        className={`flex h-full w-full ${
+          isHorizontal ? 'flex-row' : 'flex-col'
+        } overflow-hidden ${outerRadiusClass} ${
+          borderStyle === 'none' && !hasAnyVisibleCaption
+            ? 'bg-transparent shadow-none'
+            : 'bg-[#161920]/70 shadow-xl backdrop-blur-sm'
+        }`}
       >
+        {/* Legenda no Topo (modo Topo ou Topo + Embaixo) */}
+        {showTopBlock && renderCaptionBlock(isSplitTopBottom ? 'top' : 'main', 'top')}
+
+        {/* Legenda na Esquerda */}
+        {showLeftBlock && renderCaptionBlock('main', 'left')}
+
+        {/* Área da Imagem / Elemento (isolada em flex-1 para preservar 100% do corte e zoom) */}
         <div
           onPointerDown={handleCropPointerDown}
           onPointerMove={handleCropPointerMove}
@@ -266,16 +464,21 @@ export const CanvasImageNode = memo(function CanvasImageNode({
           onWheel={handleCropWheel}
           onDoubleClick={(e) => {
             e.stopPropagation();
-            if (!isCropping) setEditingCaption(true);
+            if (isCropping) return;
+            if (isSplitTopBottom && hasMainCaption && !hasTopCaption) {
+              setEditingSlot('top');
+            } else {
+              setEditingSlot('main');
+            }
           }}
-          className={`relative flex min-h-0 flex-1 items-center justify-center overflow-hidden ${
+          className={`relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden ${imageWrapRadiusClass} ${
             isCropping ? 'nodrag nowheel cursor-grab active:cursor-grabbing' : ''
           } ${borderStyle === 'none' || isCropping ? 'p-0' : 'p-1'}`}
         >
           {imgUrl ? (
             <img
               src={imgUrl}
-              alt={node.caption || 'Imagem no Canvas'}
+              alt={node.caption || node.captionTop || 'Imagem no Canvas'}
               draggable={false}
               style={{
                 opacity,
@@ -300,36 +503,11 @@ export const CanvasImageNode = memo(function CanvasImageNode({
           )}
         </div>
 
-        {/* Legenda Opcional */}
-        {(editingCaption || node.caption) && !isCropping && (
-          <div className="nodrag shrink-0 border-t border-zinc-800/70 bg-[#161920]/90 px-3 py-1.5">
-            {editingCaption ? (
-              <input
-                autoFocus
-                value={captionDraft}
-                onChange={(e) => setCaptionDraft(e.target.value)}
-                onBlur={commitCaption}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') commitCaption();
-                  if (e.key === 'Escape') setEditingCaption(false);
-                }}
-                placeholder="Escreva uma legenda..."
-                className="w-full bg-transparent text-center text-[11.5px] font-medium text-zinc-100 focus:outline-none"
-              />
-            ) : (
-              <p
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  setEditingCaption(true);
-                }}
-                title="Duplo clique para editar legenda"
-                className="cursor-text truncate text-center text-[11.5px] font-medium text-zinc-300"
-              >
-                {node.caption}
-              </p>
-            )}
-          </div>
-        )}
+        {/* Legenda na Direita */}
+        {showRightBlock && renderCaptionBlock('main', 'right')}
+
+        {/* Legenda Embaixo (modo Embaixo ou Topo + Embaixo) */}
+        {showBottomBlock && renderCaptionBlock('main', 'bottom')}
       </div>
 
       {/* Mini barra flutuante de controle de Zoom/Corte abaixo da imagem */}

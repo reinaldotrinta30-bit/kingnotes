@@ -15,7 +15,7 @@ import { resolveCardCallout, resolveCardTitleStyle, } from '@/domains/knowledge/
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
 import { useUiStore } from '@/domains/ui/store/useUiStore';
 import { InlineCardEditor } from './InlineCardEditor';
-import { CardRichPreview } from './CardRichPreview';
+import { CardRichPreview, isPlaceholderExcerpt } from './CardRichPreview';
 import { CalloutBadge } from './CalloutBadge';
 import { cn } from '@/lib/utils';
 import { buildCardTitleRenderProps } from '../utils/cardTitleStyle';
@@ -54,6 +54,13 @@ const CARD_PADDING_CLASS: Record<NonNullable<CanvasNodePosition['padding']>, str
   sm: 'p-2.5',
   md: 'p-3.5',
   lg: 'p-5',
+};
+
+const TITLE_ONLY_PADDING_CLASS: Record<NonNullable<CanvasNodePosition['padding']>, string> = {
+  none: 'px-2.5 py-1.5',
+  sm: 'px-3 py-2',
+  md: 'px-4 py-2.5',
+  lg: 'px-5 py-3.5',
 };
 
 interface CardNodeData {
@@ -108,9 +115,13 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
   const isHighlighted = highlightedCardId === card.id;
 
   const [isRevealed, setIsRevealed] = useState(false);
+  const [isBodyEmpty, setIsBodyEmpty] = useState(() => isPlaceholderExcerpt(card.excerpt));
   useEffect(() => {
     setIsRevealed(false);
   }, [canvasRecallMode]);
+  useEffect(() => {
+    setIsBodyEmpty(isPlaceholderExcerpt(card.excerpt));
+  }, [card.excerpt]);
 
   // Mantém os pontos de conexão sincronizados quando o tamanho automático/tipografia muda
   useEffect(() => {
@@ -126,6 +137,7 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
     card.callout?.position,
     card.callout?.visible,
     isEditingInline,
+    isBodyEmpty,
     updateNodeInternals,
   ]);
 
@@ -234,6 +246,8 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
   const calloutVisible = Boolean((callout.text ?? '').trim()) && callout.visible !== false;
   const calloutPos = callout.position ?? 'bottom';
   const hasFooterTags = card.tags.length > 0 || (canvasRecallMode && isRevealed);
+  const isTitleOnly =
+    isAutoSize && !isEditingInline && !isZoomedOut && isBodyEmpty && !calloutVisible && !hasFooterTags;
 
   return (
     <div
@@ -244,9 +258,12 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
       }}
       className={cn(
         'group relative flex w-full flex-col justify-between rounded-2xl text-zinc-100 shadow-lg backdrop-blur-md transition-all duration-200',
-        isAutoSize ? 'h-auto min-h-[72px]' : 'h-full min-h-[84px]',
-        'min-w-[180px]',
-        paddingClass,
+        isTitleOnly
+          ? 'h-auto min-h-0 min-w-[110px]'
+          : isAutoSize
+          ? 'h-auto min-h-[72px] min-w-[180px]'
+          : 'h-full min-h-[84px] min-w-[180px]',
+        isTitleOnly ? TITLE_ONLY_PADDING_CLASS[padding] : paddingClass,
         isEditingInline && 'z-50 ring-2 ring-indigo-500/90 shadow-2xl shadow-indigo-500/20',
         borderWidthClass,
         borderStyleClass,
@@ -261,8 +278,8 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
     >
       <NodeResizer
         isVisible={(selected || isEditingInline) && !isZoomedOut}
-        minWidth={180}
-        minHeight={72}
+        minWidth={110}
+        minHeight={42}
         lineClassName="!border-indigo-500/80"
         handleClassName="!h-2.5 !w-2.5 !rounded-sm !border-indigo-400 !bg-[#161920]"
         onResizeEnd={(_, params) => {
@@ -345,7 +362,7 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
           <div className={cn('flex min-h-0 flex-1 flex-col', !isAutoSize && 'overflow-hidden')}>
             {/* Cabeçalho do Card (largura 100% real quando centralizado, à direita, justificado ou com faixa) */}
             {isFullWidthTitle ? (
-              <div className="mb-1.5 shrink-0">
+              <div className={cn(!isTitleOnly && 'mb-1.5', 'shrink-0')}>
                 {hasStatusIcons && (
                   <div
                     className={cn(
@@ -383,7 +400,7 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
                 </div>
               </div>
             ) : (
-              <div className="mb-1.5 flex shrink-0 items-start justify-between gap-2">
+              <div className={cn(!isTitleOnly && 'mb-1.5', 'flex shrink-0 items-start justify-between gap-2')}>
                 <h3
                   style={titleProps.textStyle}
                   className={cn(
@@ -446,6 +463,7 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
                       updatedAt={card.updatedAt}
                       fallbackExcerpt={card.excerpt}
                       typography={card.typography}
+                      onEmptyChange={setIsBodyEmpty}
                     />
 
                     {calloutVisible && (calloutPos === 'bottom' || calloutPos === 'alert-box') && (
@@ -460,7 +478,7 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
                   )}
                 </div>
 
-                {shouldMaskBody && (
+                {shouldMaskBody && !isBodyEmpty && (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -528,11 +546,16 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
                 e.stopPropagation();
                 onOpen(card.id);
               }}
-              className="nodrag nopan absolute bottom-2 right-2 z-20 flex h-7 w-7 items-center justify-center rounded-lg text-zinc-400 opacity-0 transition hover:bg-zinc-800/90 hover:text-indigo-300 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 group-hover:opacity-75 group-focus-within:opacity-100"
+              className={cn(
+                'nodrag nopan absolute z-30 flex items-center justify-center text-zinc-400 opacity-0 transition focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 group-focus-within:opacity-100',
+                isTitleOnly
+                  ? '-bottom-2.5 -right-2.5 h-6 w-6 rounded-full border border-zinc-700/90 bg-[#161920] shadow-md hover:scale-110 hover:border-indigo-400 hover:bg-indigo-600 hover:text-white group-hover:opacity-100'
+                  : 'bottom-2 right-2 h-7 w-7 rounded-lg hover:bg-zinc-800/90 hover:text-indigo-300 group-hover:opacity-75'
+              )}
               title="Edição avançada (tela ampliada, anexos, flashcards e metadados)"
               aria-label="Abrir edição avançada do card"
             >
-              <Maximize2 className="h-3.5 w-3.5" />
+              <Maximize2 className={isTitleOnly ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
             </button>
           )}
         </>

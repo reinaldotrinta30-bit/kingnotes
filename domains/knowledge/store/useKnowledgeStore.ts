@@ -38,6 +38,51 @@ let workspaceRequestToken = 0;
 let activeCardRequestToken = 0;
 let secondaryCardRequestToken = 0;
 
+interface HistorySnapshot {
+  cardsById: Record<string, KnowledgeCardMeta>;
+  canvasNodes: CanvasNodePosition[];
+  canvasEdges: CanvasConnection[];
+  canvasStrokes: CanvasStroke[];
+  cardContents?: Record<string, KnowledgeCardContent>;
+}
+
+const MAX_HISTORY_STEPS = 60;
+const COALESCE_WINDOW_MS = 950;
+
+let historyPast: HistorySnapshot[] = [];
+let historyFuture: HistorySnapshot[] = [];
+let lastCoalesceKey: string | null = null;
+let lastCoalesceAt = 0;
+let historyBatchDepth = 0;
+let batchRecorded = false;
+let isRestoringHistory = false;
+const cardContentCache = new Map<string, KnowledgeCardContent>();
+
+function deepClone<T>(value: T): T {
+  if (typeof structuredClone === 'function') return structuredClone(value);
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function hasNonTextTipTapBlocks(node: unknown): boolean {
+  if (!node || typeof node !== 'object') return false;
+  const obj = node as { type?: string; content?: unknown[] };
+  if (
+    obj.type === 'image' ||
+    obj.type === 'mathBlock' ||
+    obj.type === 'mermaidBlock' ||
+    obj.type === 'wikiLink' ||
+    obj.type === 'table' ||
+    obj.type === 'horizontalRule' ||
+    obj.type === 'codeBlock'
+  ) {
+    return true;
+  }
+  if (Array.isArray(obj.content)) {
+    return obj.content.some((child) => hasNonTextTipTapBlocks(child));
+  }
+  return false;
+}
+
 interface KnowledgeState {
   isReady: boolean;
   viewMode: ActiveViewMode;
@@ -60,8 +105,15 @@ interface KnowledgeState {
   activeFullCard: FullKnowledgeCard | null;
   secondaryCardId: string | null;
   secondaryFullCard: FullKnowledgeCard | null;
+  canUndo: boolean;
+  canRedo: boolean;
 
   // Actions
+  undo: () => Promise<void>;
+  redo: () => Promise<void>;
+  beginHistoryBatch: () => void;
+  endHistoryBatch: () => void;
+  clearHistory: () => void;
   bootstrap: () => Promise<void>;
   setViewMode: (mode: ActiveViewMode) => void;
   setSearchOpen: (open: boolean) => void;
@@ -232,7 +284,214 @@ interface KnowledgeState {
   ) => Promise<HierarchyNode>;
 }
 
-export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
+export const useKnowledgeStore = create<KnowledgeState>((set, get) => {
+  const buildCurrentSnapshot = (
+    extraContents?: Record<string, KnowledgeCardContent>
+  ): HistorySnapshot => {
+    const s = get();
+    return {
+      cardsById: deepClone(s.cardsById),
+      canvasNodes: deepClone(s.canvasNodes),
+      canvasEdges: deepClone(s.canvasEdges),
+      canvasStrokes: deepClone(s.canvasStrokes),
+      ...(extraContents && Object.keys(extraContents).length > 0
+        ? { cardContents: deepClone(extraContents) }
+        : {}),
+    };
+  };
+
+  const recordHistory = (
+    coalesceKey?: string,
+    extraContents?: Record<string, KnowledgeCardContent>
+  ) => {
+    if (isRestoringHistory) return;
+
+    if (historyBatchDepth > 0) {
+      if (batchRecorded) return;
+      batchRecorded = true;
+    } else if (
+      coalesceKey &&
+      coalesceKey === lastCoalesceKey &&
+      Date.now() - lastCoalesceAt < COALESCE_WINDOW_MS &&
+      historyPast.length > 0
+    ) {
+      lastCoalesceAt = Date.now();
+      return;
+    }
+
+    historyPast.push(buildCurrentSnapshot(extraContents));
+    if (historyPast.length > MAX_HISTORY_STEPS) historyPast.shift();
+    historyFuture = [];
+    lastCoalesceKey = coalesceKey ?? null;
+    lastCoalesceAt = Date.now();
+    set({ canUndo: historyPast.length > 0, canRedo: false });
+  };
+
+  const resetHistoryStack = () => {
+    historyPast = [];
+    historyFuture = [];
+    lastCoalesceKey = null;
+    lastCoalesceAt = 0;
+    historyBatchDepth = 0;
+    batchRecorded = false;
+    set({ canUndo: false, canRedo: false });
+  };
+
+  const applyHistorySnapshot = async (
+    target: HistorySnapshot,
+    pushOppositeStack: 'past' | 'future'
+  ) => {
+    isRestoringHistory = true;
+    try {
+      const repo = getKnowledgeRepository();
+      const current = get();
+
+      // Captura conteúdos atuais dos cards afetados para o movimento inverso (Undo <-> Redo)
+      const affectedContentIds = new Set<string>(Object.keys(target.cardContents ?? {}));
+      for (const cid of Object.keys(current.cardsById)) {
+        if (!target.cardsById[cid]) affectedContentIds.add(cid);
+      }
+
+      const oppositeContents: Record<string, KnowledgeCardContent> = {};
+      for (const cid of affectedContentIds) {
+        const cached = cardContentCache.get(cid);
+        if (cached) {
+          oppositeContents[cid] = deepClone(cached);
+        } else {
+          const loaded = await repo.getFullCard(cid);
+          if (loaded) {
+            cardContentCache.set(cid, deepClone(loaded.content));
+            oppositeContents[cid] = deepClone(loaded.content);
+          }
+        }
+      }
+
+      const oppositeSnapshot = buildCurrentSnapshot(oppositeContents);
+      if (pushOppositeStack === 'future') {
+        historyFuture.push(oppositeSnapshot);
+        if (historyFuture.length > MAX_HISTORY_STEPS) historyFuture.shift();
+      } else {
+        historyPast.push(oppositeSnapshot);
+        if (historyPast.length > MAX_HISTORY_STEPS) historyPast.shift();
+      }
+
+      const now = Date.now();
+      const restoredCardsById: Record<string, KnowledgeCardMeta> = {};
+      const ops: Promise<unknown>[] = [];
+
+      // 1. Restaura cards presentes no snapshot alvo
+      for (const [cid, meta] of Object.entries(target.cardsById)) {
+        const currMeta = current.cardsById[cid];
+        const restoredContent = target.cardContents?.[cid];
+        const changed =
+          !currMeta ||
+          currMeta.version !== meta.version ||
+          currMeta.updatedAt !== meta.updatedAt ||
+          Boolean(restoredContent);
+
+        const nextMeta: KnowledgeCardMeta = {
+          ...meta,
+          deletedAt: null,
+          updatedAt: changed ? now : meta.updatedAt,
+        };
+        restoredCardsById[cid] = nextMeta;
+
+        if (restoredContent) {
+          const nextContent: KnowledgeCardContent = { ...restoredContent, updatedAt: now };
+          cardContentCache.set(cid, deepClone(nextContent));
+          ops.push(repo.saveCard(nextMeta, nextContent));
+        } else if (changed) {
+          ops.push(repo.saveCard(nextMeta));
+        }
+      }
+
+      // 2. Soft-delete nos cards que existiam agora mas não existiam no snapshot alvo
+      for (const cid of Object.keys(current.cardsById)) {
+        if (!restoredCardsById[cid]) {
+          ops.push(repo.softDeleteCard(cid));
+        }
+      }
+
+      // 3. Restaura Canvas Nodes, Edges e Strokes
+      const restoredNodes = target.canvasNodes.map((n) => ({
+        ...n,
+        deletedAt: null,
+        updatedAt: now,
+      }));
+      const restoredEdges = target.canvasEdges.map((e) => ({
+        ...e,
+        deletedAt: null,
+        updatedAt: now,
+      }));
+      const restoredStrokes = target.canvasStrokes.map((st) => ({
+        ...st,
+        deletedAt: null,
+        updatedAt: now,
+      }));
+
+      const nextNodeIds = new Set(restoredNodes.map((n) => n.id));
+      const nextEdgeIds = new Set(restoredEdges.map((e) => e.id));
+      const nextStrokeIds = new Set(restoredStrokes.map((st) => st.id));
+
+      const removedNodes = current.canvasNodes.filter((n) => !nextNodeIds.has(n.id));
+      const removedEdges = current.canvasEdges.filter((e) => !nextEdgeIds.has(e.id));
+      const removedStrokes = current.canvasStrokes.filter((st) => !nextStrokeIds.has(st.id));
+
+      if (restoredNodes.length > 0) ops.push(repo.upsertCanvasNodes(restoredNodes));
+      ops.push(
+        ...restoredEdges.map((e) => repo.saveCanvasConnection(e)),
+        ...restoredStrokes.map((st) => repo.saveCanvasStroke(st)),
+        ...removedNodes.map((n) => repo.deleteCanvasNode(n.id)),
+        ...removedEdges.map((e) => repo.deleteCanvasConnection(e.id)),
+        ...removedStrokes.map((st) => repo.deleteCanvasStroke(st.id))
+      );
+
+      await Promise.all(ops);
+
+      // 4. Sincroniza cards eventualmente abertos no Editor Avançado
+      const activeMeta = current.activeCardId ? restoredCardsById[current.activeCardId] : null;
+      const secondaryMeta = current.secondaryCardId
+        ? restoredCardsById[current.secondaryCardId]
+        : null;
+
+      set({
+        cardsById: restoredCardsById,
+        canvasNodes: restoredNodes,
+        canvasEdges: restoredEdges,
+        canvasStrokes: restoredStrokes,
+        activeCardId: activeMeta ? current.activeCardId : null,
+        activeFullCard:
+          activeMeta && current.activeFullCard
+            ? {
+                meta: activeMeta,
+                content:
+                  target.cardContents?.[activeMeta.id] ??
+                  cardContentCache.get(activeMeta.id) ??
+                  current.activeFullCard.content,
+              }
+            : null,
+        secondaryCardId: secondaryMeta ? current.secondaryCardId : null,
+        secondaryFullCard:
+          secondaryMeta && current.secondaryFullCard
+            ? {
+                meta: secondaryMeta,
+                content:
+                  target.cardContents?.[secondaryMeta.id] ??
+                  cardContentCache.get(secondaryMeta.id) ??
+                  current.secondaryFullCard.content,
+              }
+            : null,
+        canUndo: historyPast.length > 0,
+        canRedo: historyFuture.length > 0,
+      });
+    } finally {
+      lastCoalesceKey = null;
+      lastCoalesceAt = 0;
+      isRestoringHistory = false;
+    }
+  };
+
+  return {
   isReady: false,
   viewMode: 'canvas',
   isSearchOpen: false,
@@ -250,6 +509,40 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   activeFullCard: null,
   secondaryCardId: null,
   secondaryFullCard: null,
+  canUndo: false,
+  canRedo: false,
+
+  undo: async () => {
+    const prev = historyPast.pop();
+    if (!prev) {
+      set({ canUndo: false });
+      return;
+    }
+    await applyHistorySnapshot(prev, 'future');
+  },
+
+  redo: async () => {
+    const next = historyFuture.pop();
+    if (!next) {
+      set({ canRedo: false });
+      return;
+    }
+    await applyHistorySnapshot(next, 'past');
+  },
+
+  beginHistoryBatch: () => {
+    if (historyBatchDepth === 0) batchRecorded = false;
+    historyBatchDepth += 1;
+  },
+
+  endHistoryBatch: () => {
+    historyBatchDepth = Math.max(0, historyBatchDepth - 1);
+    if (historyBatchDepth === 0) batchRecorded = false;
+  },
+
+  clearHistory: () => {
+    resetHistoryStack();
+  },
 
   bootstrap: async () => {
     const firstWorkspaceId = await ensureSeedData();
@@ -268,6 +561,8 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   setSearchOpen: (isSearchOpen) => set({ isSearchOpen }),
 
   selectWorkspace: async (workspaceId) => {
+    resetHistoryStack();
+    cardContentCache.clear();
     const token = ++workspaceRequestToken;
     activeCardRequestToken += 1;
     secondaryCardRequestToken += 1;
@@ -314,6 +609,9 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
 
   selectHierarchy: (selectedHierarchyId) => {
     const state = get();
+    if (state.selectedHierarchyId !== selectedHierarchyId) {
+      resetHistoryStack();
+    }
     // Se algum card aberto no editor não pertence ao novo contexto, fecha para evitar salvar no contexto errado
     const keepActive =
       !selectedHierarchyId ||
@@ -364,6 +662,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
 
     if (token !== activeCardRequestToken) return;
     if (full && expectedWorkspaceId && full.meta.workspaceId !== expectedWorkspaceId) return;
+    if (full) cardContentCache.set(cardId, deepClone(full.content));
 
     set((s) => ({
       activeCardId: cardId,
@@ -587,7 +886,9 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       excerpt:
         template === 'law'
           ? 'Estrutura de Lei Seca e Pegadinhas de Banca.'
-          : 'Clique para editar seu conhecimento...',
+          : template === 'jurisprudence'
+          ? 'Informativo / Súmula nº ...'
+          : '',
       notes: '',
       tags: template !== 'blank' ? [template] : [],
       color: template === 'law' ? 'amber' : template === 'jurisprudence' ? 'emerald' : 'default',
@@ -609,7 +910,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const content: KnowledgeCardContent = {
       cardId,
       tiptapJson: templateDocs[template],
-      plainText: title,
+      plainText: template === 'blank' ? '' : title,
       flashcards: [],
       attachments: [],
       updatedAt: now,
@@ -637,6 +938,8 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       version: 1,
     };
 
+    recordHistory();
+    cardContentCache.set(cardId, deepClone(content));
     await repo.saveCard(meta, content);
     await repo.upsertCanvasNodes([canvasNode]);
 
@@ -760,6 +1063,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const repo = getKnowledgeRepository();
     const current = get().cardsById[cardId];
     if (!current) return;
+    recordHistory(`cardMeta:${cardId}:${Object.keys(patch).sort().join(',')}`);
 
     // Mantém notes e callout.text sempre sincronizados
     const mergedPatch: Partial<KnowledgeCardMeta> = { ...patch };
@@ -803,9 +1107,36 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const current = get().cardsById[cardId];
     if (!current) return;
 
+    let prevContent = cardContentCache.get(cardId);
+    if (!prevContent) {
+      const state = get();
+      if (state.activeFullCard?.meta.id === cardId) {
+        prevContent = deepClone(state.activeFullCard.content);
+      } else if (state.secondaryFullCard?.meta.id === cardId) {
+        prevContent = deepClone(state.secondaryFullCard.content);
+      } else {
+        const existing = await repo.getFullCard(cardId);
+        if (existing) prevContent = deepClone(existing.content);
+      }
+    }
+
+    recordHistory(
+      `cardContent:${cardId}`,
+      prevContent ? { [cardId]: prevContent } : undefined
+    );
+    cardContentCache.set(cardId, deepClone(content));
+
+    const trimmedPlain = plainTextExcerpt.trim();
+    const hasRichVisual = hasNonTextTipTapBlocks(content.tiptapJson);
+    const nextExcerpt = trimmedPlain
+      ? trimmedPlain.slice(0, 220)
+      : hasRichVisual
+      ? '📎 Conteúdo visual'
+      : '';
+
     const updatedMeta: KnowledgeCardMeta = {
       ...current,
-      excerpt: plainTextExcerpt.slice(0, 220) || current.excerpt,
+      excerpt: nextExcerpt,
       updatedAt: Date.now(),
       version: current.version + 1,
       searchTokens: buildSearchTokens([
@@ -833,6 +1164,8 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
 
   deleteCard: async (cardId) => {
     const repo = getKnowledgeRepository();
+    const existing = cardContentCache.get(cardId) ?? (await repo.getFullCard(cardId))?.content;
+    recordHistory(undefined, existing ? { [cardId]: deepClone(existing) } : undefined);
     await repo.softDeleteCard(cardId);
     set((s) => {
       const nextCards = { ...s.cardsById };
@@ -857,6 +1190,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   updateCardsMetaBulk: async (cardIds, patch) => {
     const repo = getKnowledgeRepository();
     const state = get();
+    recordHistory(`cardsBulk:${cardIds.join(',')}:${Object.keys(patch).sort().join(',')}`);
     const now = Date.now();
     const updatedMap: Record<string, KnowledgeCardMeta> = { ...state.cardsById };
     const toSave: KnowledgeCardMeta[] = [];
@@ -907,6 +1241,13 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       }
     }
 
+    const removedContents: Record<string, KnowledgeCardContent> = {};
+    for (const cid of cardIdsToRemove) {
+      const c = cardContentCache.get(cid) ?? (await repo.getFullCard(cid))?.content;
+      if (c) removedContents[cid] = deepClone(c);
+    }
+    recordHistory(undefined, removedContents);
+
     const allEdgesToDelete = new Set<string>(edgeIdSet);
     for (const e of state.canvasEdges) {
       if (nodeIdSet.has(e.sourceNodeId) || nodeIdSet.has(e.targetNodeId)) {
@@ -940,6 +1281,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const state = get();
     const workspaceId = state.activeWorkspaceId;
     if (!workspaceId) return [];
+    recordHistory();
 
     const now = Date.now();
     const newCardsMap: Record<string, KnowledgeCardMeta> = { ...state.cardsById };
@@ -1033,6 +1375,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     }
 
     if (parsed.length === 0) return;
+    recordHistory();
 
     const now = Date.now();
     const chain = resolveHierarchyChain(state.hierarchy, state.selectedHierarchyId);
@@ -1294,6 +1637,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const repo = getKnowledgeRepository();
     const target = get().canvasEdges.find((e) => e.id === edgeId);
     if (!target) return;
+    recordHistory(`edge:${edgeId}:${Object.keys(patch).sort().join(',')}`);
     const updated: CanvasConnection = {
       ...target,
       ...patch,
@@ -1308,6 +1652,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   },
 
   deleteCanvasEdge: async (edgeId) => {
+    recordHistory();
     const repo = getKnowledgeRepository();
     set((s) => ({
       canvasEdges: s.canvasEdges.filter((e) => e.id !== edgeId),
@@ -1375,6 +1720,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const state = get();
     const workspaceId = state.activeWorkspaceId;
     if (!workspaceId) return null;
+    recordHistory();
     const repo = getKnowledgeRepository();
     const scope = resolveOptionalHierarchyScope(state.hierarchy, state.selectedHierarchyId);
     const now = Date.now();
@@ -1395,6 +1741,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   },
 
   deleteCanvasStroke: async (strokeId) => {
+    recordHistory();
     const repo = getKnowledgeRepository();
     set((s) => ({ canvasStrokes: s.canvasStrokes.filter((st) => st.id !== strokeId) }));
     await repo.deleteCanvasStroke(strokeId);
@@ -1413,6 +1760,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const state = get();
     const workspaceId = state.activeWorkspaceId;
     if (!workspaceId) return;
+    recordHistory();
     const repo = getKnowledgeRepository();
 
     if (!state.selectedHierarchyId) {
@@ -1477,6 +1825,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const now = Date.now();
     const map = new Map(updates.map((u) => [u.id, u]));
     const modified: CanvasNodePosition[] = [];
+    recordHistory(`pos:${updates.map((u) => u.id).sort().join(',')}`);
 
     const nextNodes = get().canvasNodes.map((n) => {
       const upd = map.get(n.id);
@@ -1494,6 +1843,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   },
 
   addCanvasEdge: async (sourceNodeId, targetNodeId, label, options) => {
+    recordHistory();
     const repo = getKnowledgeRepository();
     const workspaceId = get().activeWorkspaceId!;
     const now = Date.now();
@@ -1526,6 +1876,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   },
 
   updateCanvasEdgesBulk: async (edges) => {
+    recordHistory('edgesBulk');
     const repo = getKnowledgeRepository();
     set({ canvasEdges: edges });
     await Promise.all(edges.map((e) => repo.saveCanvasConnection(e)));
@@ -1580,6 +1931,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     width = 640,
     height = 360
   ) => {
+    recordHistory();
     const state = get();
     const repo = getKnowledgeRepository();
     const workspaceId = state.activeWorkspaceId!;
@@ -1624,6 +1976,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const state = get();
     const workspaceId = state.activeWorkspaceId;
     if (!workspaceId) return null;
+    recordHistory();
     const repo = getKnowledgeRepository();
     const scope = resolveOptionalHierarchyScope(state.hierarchy, state.selectedHierarchyId);
     const now = Date.now();
@@ -1658,6 +2011,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const repo = getKnowledgeRepository();
     const target = get().canvasNodes.find((n) => n.id === nodeId);
     if (!target) return;
+    recordHistory(`node:${nodeId}:${Object.keys(patch).sort().join(',')}`);
     const updated: CanvasNodePosition = {
       ...target,
       ...patch,
@@ -1675,6 +2029,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const state = get();
     const workspaceId = state.activeWorkspaceId;
     if (!workspaceId) return null;
+    recordHistory();
     const repo = getKnowledgeRepository();
     const scope = resolveOptionalHierarchyScope(state.hierarchy, state.selectedHierarchyId);
     const now = Date.now();
@@ -1791,6 +2146,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   duplicateCanvasText: async (nodeId) => {
     const target = get().canvasNodes.find((n) => n.id === nodeId && n.nodeType === 'text');
     if (!target) return null;
+    recordHistory();
     const repo = getKnowledgeRepository();
     const now = Date.now();
     const copy: CanvasNodePosition = {
@@ -1820,6 +2176,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const state = get();
     const workspaceId = state.activeWorkspaceId;
     if (!workspaceId) return null;
+    recordHistory();
     const repo = getKnowledgeRepository();
     const scope = resolveOptionalHierarchyScope(state.hierarchy, state.selectedHierarchyId);
     const now = Date.now();
@@ -1888,6 +2245,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const workspaceId = state.activeWorkspaceId;
     const parent = state.canvasNodes.find((n) => n.id === parentNodeId);
     if (!workspaceId || !parent) return null;
+    recordHistory();
 
     const repo = getKnowledgeRepository();
     const now = Date.now();
@@ -1985,6 +2343,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   duplicateCanvasTopic: async (nodeId) => {
     const target = get().canvasNodes.find((n) => n.id === nodeId && n.nodeType === 'topic');
     if (!target) return null;
+    recordHistory();
     const repo = getKnowledgeRepository();
     const now = Date.now();
     const copy: CanvasNodePosition = {
@@ -2008,6 +2367,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const textNode = state.canvasNodes.find((n) => n.id === nodeId && n.nodeType === 'text');
     const workspaceId = state.activeWorkspaceId;
     if (!textNode || !workspaceId) return null;
+    recordHistory();
 
     const repo = getKnowledgeRepository();
     const now = Date.now();
@@ -2150,6 +2510,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const repo = getKnowledgeRepository();
     const fullCard = await repo.getFullCard(cardNode.cardId);
     if (!fullCard) return null;
+    recordHistory(undefined, { [fullCard.meta.id]: deepClone(fullCard.content) });
 
     const now = Date.now();
     const { meta, content } = fullCard;
@@ -2323,6 +2684,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     const repo = getKnowledgeRepository();
     const target = get().canvasNodes.find((n) => n.id === groupId);
     if (!target) return;
+    recordHistory(`groupRename:${groupId}`);
     const updated = { ...target, label, updatedAt: Date.now() };
     set((s) => ({
       canvasNodes: s.canvasNodes.map((n) => (n.id === groupId ? updated : n)),
@@ -2362,4 +2724,5 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     set((s) => ({ hierarchy: [...s.hierarchy, node] }));
     return node;
   },
-}));
+};
+});

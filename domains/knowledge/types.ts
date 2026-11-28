@@ -282,7 +282,9 @@ export interface CanvasNodePosition extends SyncableEntity, HierarchyScope {
   borderStyle?: 'solid' | 'dashed' | 'dotted' | 'none';
   borderWidth?: 'thin' | 'medium' | 'thick';
   blobId?: string;          // Imagem solta salva no IndexedDB
-  caption?: string;         // Legenda opcional da imagem solta
+  caption?: string;         // Legenda opcional da imagem solta (Embaixo / Topo / Lateral)
+  captionTop?: string;      // Legenda superior exclusiva do modo Topo + Embaixo
+  captionPosition?: 'bottom' | 'top' | 'left' | 'right' | 'top-bottom';
   imageFit?: 'contain' | 'cover' | 'fill';
   keepAspectRatio?: boolean;
   rotation?: number;

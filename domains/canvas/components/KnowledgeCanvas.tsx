@@ -114,6 +114,7 @@ import {
 } from '../utils/panoramaLayout';
 import { EditableEdge } from './EditableEdge';
 import { StickerLibraryPanel } from './StickerLibraryPanel';
+import { ConnectionQuickItemType, ConnectionQuickMenu } from './ConnectionQuickMenu';
 import { OutlineEditorView } from './OutlineEditorView';
 import { DrawingLayer } from './DrawingLayer';
 import { computeMultiAxisLayout, LayoutDirection } from '../utils/autoLayout';
@@ -253,7 +254,12 @@ function CanvasInner() {
     deleteCanvasSelection,
     duplicateCanvasNodes,
     importOutlineToCanvas,
-    restoreCanvasSnapshot,
+    canUndo,
+    canRedo,
+    undo: storeUndo,
+    redo: storeRedo,
+    beginHistoryBatch,
+    endHistoryBatch,
   } = useKnowledgeStore();
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -286,12 +292,19 @@ function CanvasInner() {
     setHeaderSlot(document.getElementById('kc-header-tools-slot'));
   }, [zenMode, isOutlineMode]);
 
-  const historyRef = useRef<{
-    past: Array<{ nodes: CanvasNodePosition[]; edges: CanvasConnection[]; strokes: CanvasStroke[] }>;
-    future: Array<{ nodes: CanvasNodePosition[]; edges: CanvasConnection[]; strokes: CanvasStroke[] }>;
-  }>({ past: [], future: [] });
-  const [canUndo, setCanUndo] = useState(false);
-  const [canRedo, setCanRedo] = useState(false);
+  const [connectMenu, setConnectMenu] = useState<{
+    sourceId: string;
+    sourceHandle: string;
+    screenX: number;
+    screenY: number;
+    flowPos: { x: number; y: number };
+  } | null>(null);
+
+  const pendingMediaConnectionRef = useRef<{
+    sourceId: string;
+    sourceHandle: string;
+    flowPos: { x: number; y: number };
+  } | null>(null);
 
   const clipboardIdsRef = useRef<string[]>([]);
   const viewportHistory = useRef<Viewport[]>([]);
@@ -340,18 +353,64 @@ function CanvasInner() {
     [screenToFlowPosition]
   );
 
-  const pushHistorySnapshot = useCallback(() => {
-    const state = useKnowledgeStore.getState();
-    historyRef.current.past.push({
-      nodes: state.canvasNodes.map((n) => ({ ...n })),
-      edges: state.canvasEdges.map((e) => ({ ...e })),
-      strokes: state.canvasStrokes.map((st) => ({ ...st })),
-    });
-    if (historyRef.current.past.length > 50) historyRef.current.past.shift();
-    historyRef.current.future = [];
-    setCanUndo(true);
-    setCanRedo(false);
-  }, []);
+  // Histórico agora é gravado automaticamente pela useKnowledgeStore (mantido no-op para compatibilidade)
+  const pushHistorySnapshot = useCallback(() => {}, []);
+
+  // Calcula posição inicial elegante e handle oposto ao criar item a partir de uma ponta de conexão
+  const resolveConnectedDropLayout = useCallback(
+    (sourceHandle: string, flowPos: { x: number; y: number }, w: number, h: number) => {
+      const side = sourceHandle.replace('s-', '').replace('t-', '');
+      if (side === 'left') {
+        return {
+          x: Math.round(flowPos.x - w),
+          y: Math.round(flowPos.y - h / 2),
+          targetHandle: 't-right',
+        };
+      }
+      if (side === 'top') {
+        return {
+          x: Math.round(flowPos.x - w / 2),
+          y: Math.round(flowPos.y - h),
+          targetHandle: 't-bottom',
+        };
+      }
+      if (side === 'bottom') {
+        return {
+          x: Math.round(flowPos.x - w / 2),
+          y: Math.round(flowPos.y),
+          targetHandle: 't-top',
+        };
+      }
+      return {
+        x: Math.round(flowPos.x),
+        y: Math.round(flowPos.y - h / 2),
+        targetHandle: 't-left',
+      };
+    },
+    []
+  );
+
+  const connectEdgeFromSource = useCallback(
+    async (sourceId: string, sourceHandle: string, targetNodeId: string, targetHandle: string) => {
+      const srcNode = useKnowledgeStore
+        .getState()
+        .canvasNodes.find((n) => n.id === sourceId);
+      const topicEdgePref = srcNode?.topicConfig?.defaultEdgeStyle;
+      await addCanvasEdge(sourceId, targetNodeId, undefined, {
+        sourceHandle,
+        targetHandle,
+        edgeType: topicEdgePref?.edgeType ?? globalEdgeType,
+        lineStyle: topicEdgePref?.lineStyle ?? 'solid',
+        style: globalAnimated
+          ? 'animated'
+          : topicEdgePref?.lineStyle === 'dashed'
+          ? 'dashed'
+          : 'solid',
+        color: topicEdgePref?.color ?? globalColor,
+      });
+    },
+    [addCanvasEdge, globalEdgeType, globalAnimated, globalColor]
+  );
 
   const currentContextKey = `${activeWorkspaceId ?? ''}::${selectedHierarchyId ?? 'ALL'}`;
   const isForcedDirectMap = directMapOverrideKey === currentContextKey;
@@ -427,32 +486,12 @@ function CanvasInner() {
   );
 
   const handleUndo = useCallback(async () => {
-    const prev = historyRef.current.past.pop();
-    if (!prev) return;
-    const state = useKnowledgeStore.getState();
-    historyRef.current.future.push({
-      nodes: state.canvasNodes.map((n) => ({ ...n })),
-      edges: state.canvasEdges.map((e) => ({ ...e })),
-      strokes: state.canvasStrokes.map((st) => ({ ...st })),
-    });
-    await restoreCanvasSnapshot(prev.nodes, prev.edges, prev.strokes);
-    setCanUndo(historyRef.current.past.length > 0);
-    setCanRedo(true);
-  }, [restoreCanvasSnapshot]);
+    await storeUndo();
+  }, [storeUndo]);
 
   const handleRedo = useCallback(async () => {
-    const next = historyRef.current.future.pop();
-    if (!next) return;
-    const state = useKnowledgeStore.getState();
-    historyRef.current.past.push({
-      nodes: state.canvasNodes.map((n) => ({ ...n })),
-      edges: state.canvasEdges.map((e) => ({ ...e })),
-      strokes: state.canvasStrokes.map((st) => ({ ...st })),
-    });
-    await restoreCanvasSnapshot(next.nodes, next.edges, next.strokes);
-    setCanUndo(true);
-    setCanRedo(historyRef.current.future.length > 0);
-  }, [restoreCanvasSnapshot]);
+    await storeRedo();
+  }, [storeRedo]);
 
   const saveViewport = useCallback(() => {
     viewportHistory.current.push(getViewport());
@@ -542,25 +581,61 @@ function CanvasInner() {
       const blobId = `canvas-img-${crypto.randomUUID()}`;
       await getKnowledgeRepository().saveBlob(blobId, blob);
 
-      let pos: { x: number; y: number };
-      if (clientPos) {
-        const flow = screenToFlowPosition(clientPos);
-        pos = { x: Math.round(flow.x - width / 2), y: Math.round(flow.y - height / 2) };
-      } else {
-        pos = getSmartViewportPos(width, height);
-      }
+      const pendingConn = pendingMediaConnectionRef.current;
+      pendingMediaConnectionRef.current = null;
 
-      await createCanvasImage({
-        x: pos.x,
-        y: pos.y,
-        blobId,
-        width,
-        height,
-      });
+      beginHistoryBatch();
+      try {
+        let pos: { x: number; y: number };
+        let targetHandle = 't-left';
+        if (pendingConn) {
+          const drop = resolveConnectedDropLayout(
+            pendingConn.sourceHandle,
+            pendingConn.flowPos,
+            width,
+            height
+          );
+          pos = { x: drop.x, y: drop.y };
+          targetHandle = drop.targetHandle;
+        } else if (clientPos) {
+          const flow = screenToFlowPosition(clientPos);
+          pos = { x: Math.round(flow.x - width / 2), y: Math.round(flow.y - height / 2) };
+        } else {
+          pos = getSmartViewportPos(width, height);
+        }
+
+        const createdId = await createCanvasImage({
+          x: pos.x,
+          y: pos.y,
+          blobId,
+          width,
+          height,
+        });
+
+        if (pendingConn && createdId) {
+          await connectEdgeFromSource(
+            pendingConn.sourceId,
+            pendingConn.sourceHandle,
+            createdId,
+            targetHandle
+          );
+        }
+      } finally {
+        endHistoryBatch();
+      }
 
       addToast({ message: 'Imagem adicionada ao Canvas — você pode redimensionar e conectar!', variant: 'success' }, 2800);
     },
-    [addToast, pushHistorySnapshot, screenToFlowPosition, getSmartViewportPos, createCanvasImage]
+    [
+      addToast,
+      beginHistoryBatch,
+      endHistoryBatch,
+      resolveConnectedDropLayout,
+      connectEdgeFromSource,
+      screenToFlowPosition,
+      getSmartViewportPos,
+      createCanvasImage,
+    ]
   );
 
   // Insere adesivo/elemento SVG (StarNote ou Iconify) salvo 100% offline no IndexedDB
@@ -576,26 +651,65 @@ function CanvasInner() {
       height: number;
       caption: string;
     }) => {
-      pushHistorySnapshot();
+      const pendingConn = pendingMediaConnectionRef.current;
+      pendingMediaConnectionRef.current = null;
+
       const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
       const blobId = `canvas-sticker-${crypto.randomUUID()}`;
       await getKnowledgeRepository().saveBlob(blobId, blob);
 
-      const pos = getSmartViewportPos(width, height);
-      await createCanvasImage({
-        x: pos.x,
-        y: pos.y,
-        blobId,
-        width,
-        height,
-        caption,
-        borderStyle: 'none',
-        keepAspectRatio: true,
-      });
+      beginHistoryBatch();
+      try {
+        let pos: { x: number; y: number };
+        let targetHandle = 't-left';
+        if (pendingConn) {
+          const drop = resolveConnectedDropLayout(
+            pendingConn.sourceHandle,
+            pendingConn.flowPos,
+            width,
+            height
+          );
+          pos = { x: drop.x, y: drop.y };
+          targetHandle = drop.targetHandle;
+        } else {
+          pos = getSmartViewportPos(width, height);
+        }
+
+        const createdId = await createCanvasImage({
+          x: pos.x,
+          y: pos.y,
+          blobId,
+          width,
+          height,
+          caption: '',
+          borderStyle: 'none',
+          keepAspectRatio: true,
+        });
+
+        if (pendingConn && createdId) {
+          await connectEdgeFromSource(
+            pendingConn.sourceId,
+            pendingConn.sourceHandle,
+            createdId,
+            targetHandle
+          );
+          setIsStickerPanelOpen(false);
+        }
+      } finally {
+        endHistoryBatch();
+      }
 
       addToast({ message: `Elemento "${caption}" inserido no Canvas`, variant: 'success' }, 2200);
     },
-    [pushHistorySnapshot, getSmartViewportPos, createCanvasImage, addToast]
+    [
+      beginHistoryBatch,
+      endHistoryBatch,
+      resolveConnectedDropLayout,
+      connectEdgeFromSource,
+      getSmartViewportPos,
+      createCanvasImage,
+      addToast,
+    ]
   );
   
 
@@ -801,7 +915,18 @@ function CanvasInner() {
         }
 
         const isEditingThis = inlineEditingCardId === card.id;
-        const isAutoCard = cn.sizingMode === 'auto';
+        const hasCalloutText =
+          Boolean((card.callout?.text ?? card.notes ?? '').trim()) &&
+          card.callout?.visible !== false;
+        const isTitleOnlyCard =
+          !isEditingThis &&
+          (!card.excerpt?.trim() ||
+            card.excerpt.trim() === 'Clique para editar seu conhecimento...') &&
+          !hasCalloutText &&
+          card.tags.length === 0;
+        const isAutoCard =
+          cn.sizingMode === 'auto' || (cn.sizingMode !== 'custom' && isTitleOnlyCard);
+
         next.push({
           id: cn.id,
           type: 'knowledgeCard',
@@ -810,15 +935,19 @@ function CanvasInner() {
           className: isAnyInlineEditing && !isEditingThis ? 'kc-edit-dimmed' : undefined,
           selected: prev?.selected ?? false,
           hidden: prev?.hidden ?? false,
-          style: isAutoCard
-            ? { width: cn.width || 340 }
+          style: isEditingThis
+            ? { width: Math.max(320, cn.width || 340) }
+            : isAutoCard
+            ? isTitleOnlyCard
+              ? { width: 'fit-content', minWidth: 110, maxWidth: Math.max(340, cn.width || 340) }
+              : { width: cn.width || 340 }
             : {
                 width: cn.width || 350,
                 height: cn.height || 240,
               },
           data: {
             card,
-            sizingMode: cn.sizingMode ?? 'custom',
+            sizingMode: isAutoCard ? 'auto' : 'custom',
             padding: cn.padding ?? 'md',
             isCollapsed: (prev?.data as { isCollapsed?: boolean } | undefined)?.isCollapsed ?? false,
             onOpen: openCard,
@@ -1022,9 +1151,8 @@ function CanvasInner() {
   useEffect(() => {
     preEditViewportRef.current = null;
     manualMoveDuringEditRef.current = false;
-    historyRef.current = { past: [], future: [] };
-    setCanUndo(false);
-    setCanRedo(false);
+    setConnectMenu(null);
+    pendingMediaConnectionRef.current = null;
     setIsPlacingText(false);
     setSelectedEdgeLabelId(null);
     setEditingEdgeLabelId(null);
@@ -1341,25 +1469,41 @@ function CanvasInner() {
 
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
-      if (
-        isOutlineMode ||
-        activeCardId !== null ||
-        inlineEditingCardId !== null ||
-        editingTextNodeId !== null ||
-        editingTopicNodeId !== null ||
-        editingEdgeLabelId !== null ||
-        isLocked
-      ) {
+      if (isOutlineMode || activeCardId !== null || isLocked) {
         return;
       }
 
       const target = e.target as HTMLElement | null;
-      if (
+      const isTypingInField = Boolean(
         target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.tagName === 'SELECT' ||
-          target.isContentEditable)
+          (target.tagName === 'INPUT' ||
+            target.tagName === 'TEXTAREA' ||
+            target.tagName === 'SELECT' ||
+            target.isContentEditable)
+      );
+
+      if (isTypingInField) return;
+
+      const cmdOrCtrlEarly = e.metaKey || e.ctrlKey;
+      if (cmdOrCtrlEarly) {
+        const k = e.key.toLowerCase();
+        if (k === 'z' && !e.shiftKey) {
+          e.preventDefault();
+          await handleUndo();
+          return;
+        }
+        if (k === 'y' || (k === 'z' && e.shiftKey)) {
+          e.preventDefault();
+          await handleRedo();
+          return;
+        }
+      }
+
+      if (
+        inlineEditingCardId !== null ||
+        editingTextNodeId !== null ||
+        editingTopicNodeId !== null ||
+        editingEdgeLabelId !== null
       ) {
         return;
       }
@@ -1704,6 +1848,8 @@ function CanvasInner() {
         }
       }
 
+      beginHistoryBatch();
+      try {
       if (positionUpdates.length > 0) {
         await persistNodePositions(positionUpdates);
       }
@@ -1738,8 +1884,11 @@ function CanvasInner() {
       if (edgePersistOps.length > 0) {
         await Promise.all(edgePersistOps);
       }
+      } finally {
+        endHistoryBatch();
+      }
     },
-    [getNodes, persistNodePositions, updateCanvasEdge]
+    [getNodes, persistNodePositions, updateCanvasEdge, beginHistoryBatch, endHistoryBatch]
   );
 
   const onNodeDragStart = useCallback(
@@ -1834,7 +1983,7 @@ function CanvasInner() {
   );
 
   const onConnectEnd = useCallback(
-    async (event: MouseEvent | TouchEvent) => {
+    (event: MouseEvent | TouchEvent) => {
       if (!connectingNodeId.current) return;
       const sourceId = connectingNodeId.current;
       const sourceHandle = connectingHandleId.current || 's-right';
@@ -1848,46 +1997,103 @@ function CanvasInner() {
 
       if (!targetIsPane) return;
 
-      pushHistorySnapshot();
-      const pos = screenToFlowPosition({ x: point.clientX, y: point.clientY });
-      const newCardId = await createCardOnCanvas({
-        x: Math.round(pos.x),
-        y: Math.round(pos.y - 100),
-        title: 'Novo Tópico Conectado',
+      const flowPos = screenToFlowPosition({ x: point.clientX, y: point.clientY });
+      setConnectMenu({
+        sourceId,
+        sourceHandle,
+        screenX: point.clientX,
+        screenY: point.clientY,
+        flowPos,
       });
+    },
+    [screenToFlowPosition]
+  );
 
-      const createdNode = useKnowledgeStore
-        .getState()
-        .canvasNodes.find((n) => n.cardId === newCardId);
+  const handleSelectQuickConnect = useCallback(
+    async (type: ConnectionQuickItemType) => {
+      if (!connectMenu) return;
+      const { sourceId, sourceHandle, flowPos } = connectMenu;
+      setConnectMenu(null);
 
-      if (createdNode) {
-        const cleanSide = sourceHandle.replace('s-', '').replace('t-', '');
-        const opposite: Record<string, string> = {
-          top: 'bottom',
-          bottom: 'top',
-          left: 'right',
-          right: 'left',
-        };
-        await addCanvasEdge(sourceId, createdNode.id, undefined, {
-          sourceHandle,
-          targetHandle: `t-${opposite[cleanSide] || 'left'}`,
-          edgeType: globalEdgeType,
-          style: globalAnimated ? 'animated' : 'solid',
-          color: globalColor,
-        });
+      if (type === 'image') {
+        pendingMediaConnectionRef.current = { sourceId, sourceHandle, flowPos };
+        imageInputRef.current?.click();
+        return;
       }
 
-      setInlineEditingCardId(newCardId);
+      if (type === 'element') {
+        pendingMediaConnectionRef.current = { sourceId, sourceHandle, flowPos };
+        setIsStickerPanelOpen(true);
+        return;
+      }
+
+      beginHistoryBatch();
+      try {
+        if (type === 'card') {
+          const drop = resolveConnectedDropLayout(sourceHandle, flowPos, 320, 96);
+          const newCardId = await createCardOnCanvas({
+            x: drop.x,
+            y: drop.y,
+            title: 'Novo Card',
+          });
+          const createdNode = useKnowledgeStore
+            .getState()
+            .canvasNodes.find((n) => n.cardId === newCardId);
+          if (createdNode) {
+            await connectEdgeFromSource(sourceId, sourceHandle, createdNode.id, drop.targetHandle);
+          }
+          setInlineEditingCardId(newCardId);
+          return;
+        }
+
+        if (type === 'topic') {
+          const drop = resolveConnectedDropLayout(sourceHandle, flowPos, 210, 74);
+          const srcNode = useKnowledgeStore
+            .getState()
+            .canvasNodes.find((n) => n.id === sourceId);
+          const topicId = await createCanvasTopic({
+            x: drop.x,
+            y: drop.y,
+            label: 'Novo Tópico',
+            shape: 'rounded',
+            color: srcNode?.color ?? globalColor,
+          });
+          if (topicId) {
+            await connectEdgeFromSource(sourceId, sourceHandle, topicId, drop.targetHandle);
+            setEditingTopicNodeId(topicId);
+          }
+          return;
+        }
+
+        if (type === 'text') {
+          const drop = resolveConnectedDropLayout(sourceHandle, flowPos, 260, 72);
+          const textId = await createCanvasText({
+            x: drop.x,
+            y: drop.y,
+            preset: 'plain',
+          });
+          if (textId) {
+            await connectEdgeFromSource(sourceId, sourceHandle, textId, drop.targetHandle);
+            setEditingTextNodeId(textId);
+          }
+        }
+      } finally {
+        endHistoryBatch();
+      }
     },
     [
-      screenToFlowPosition,
+      connectMenu,
+      beginHistoryBatch,
+      endHistoryBatch,
+      resolveConnectedDropLayout,
+      connectEdgeFromSource,
       createCardOnCanvas,
-      addCanvasEdge,
-      globalEdgeType,
-      globalAnimated,
+      createCanvasTopic,
+      createCanvasText,
       globalColor,
-      pushHistorySnapshot,
       setInlineEditingCardId,
+      setEditingTopicNodeId,
+      setEditingTextNodeId,
     ]
   );
 
@@ -1925,24 +2131,29 @@ function CanvasInner() {
     setEdges(laidEdges);
     setOpenHeaderMenu(null);
 
-    await persistNodePositions(
-      laidNodes.map((n) => ({ id: n.id, x: Math.round(n.position.x), y: Math.round(n.position.y) }))
-    );
+    beginHistoryBatch();
+    try {
+      await persistNodePositions(
+        laidNodes.map((n) => ({ id: n.id, x: Math.round(n.position.x), y: Math.round(n.position.y) }))
+      );
 
-    const updatedStoreEdges = canvasEdges.map((ce) => {
-      const matched = laidEdges.find((le) => le.id === ce.id);
-      return matched
-        ? {
-            ...ce,
-            sourceHandle: matched.sourceHandle ?? ce.sourceHandle,
-            targetHandle: matched.targetHandle ?? ce.targetHandle,
-            routingMode: 'auto' as const,
-            waypoints: [],
-            updatedAt: Date.now(),
-          }
-        : ce;
-    });
-    await updateCanvasEdgesBulk(updatedStoreEdges);
+      const updatedStoreEdges = canvasEdges.map((ce) => {
+        const matched = laidEdges.find((le) => le.id === ce.id);
+        return matched
+          ? {
+              ...ce,
+              sourceHandle: matched.sourceHandle ?? ce.sourceHandle,
+              targetHandle: matched.targetHandle ?? ce.targetHandle,
+              routingMode: 'auto' as const,
+              waypoints: [],
+              updatedAt: Date.now(),
+            }
+          : ce;
+      });
+      await updateCanvasEdgesBulk(updatedStoreEdges);
+    } finally {
+      endHistoryBatch();
+    }
     setTimeout(() => fitCanvasWithMargins({ duration: 450, maxZoom: 1.05 }), 80);
   };
 
@@ -3009,6 +3220,79 @@ const handleCreateQuickText = async (
                 <option value="xl">Cantos: Redondos</option>
                 <option value="full">Círculo/Pílula</option>
               </select>
+
+              <div className="h-4 w-px bg-zinc-800" />
+
+              {/* Posição e Alinhamento da Legenda Multi-linha */}
+              <select
+                value={activeImageRecord.captionPosition ?? 'bottom'}
+                onChange={(e) => {
+                  const nextPos = e.target.value as NonNullable<
+                    CanvasNodePosition['captionPosition']
+                  >;
+                  const patch: Partial<CanvasNodePosition> = { captionPosition: nextPos };
+
+                  // Se sair de "Topo + Embaixo" tendo preenchido apenas o texto superior, preserva na legenda principal
+                  if (
+                    nextPos !== 'top-bottom' &&
+                    !(activeImageRecord.caption ?? '').trim() &&
+                    (activeImageRecord.captionTop ?? '').trim()
+                  ) {
+                    patch.caption = activeImageRecord.captionTop;
+                  }
+
+                  // Garante largura confortável quando posicionar texto ao lado da imagem
+                  if (
+                    (nextPos === 'left' || nextPos === 'right') &&
+                    (activeImageRecord.width || 0) < 340
+                  ) {
+                    patch.width = 360;
+                  }
+
+                  updateCanvasNode(activeImageRecord.id, patch);
+                }}
+                title="Posição do texto / legenda na imagem (duplo clique na imagem para escrever)"
+                className="rounded-lg border border-zinc-800 bg-[#0F1115] px-2 py-1 text-[11px] text-zinc-200 focus:outline-none"
+              >
+                <option value="bottom">Legenda: Embaixo</option>
+                <option value="top">Legenda: Topo</option>
+                <option value="left">Legenda: Esquerda</option>
+                <option value="right">Legenda: Direita</option>
+                <option value="top-bottom">Legenda: Topo + Embaixo</option>
+              </select>
+
+              <div className="flex items-center gap-0.5 rounded-lg border border-zinc-800 bg-[#0F1115] p-0.5">
+                {(
+                  [
+                    { id: 'left', icon: AlignLeft, title: 'Alinhar legenda à esquerda' },
+                    { id: 'center', icon: AlignCenter, title: 'Centralizar legenda' },
+                    { id: 'right', icon: AlignRight, title: 'Alinhar legenda à direita' },
+                    { id: 'justify', icon: AlignJustify, title: 'Justificar legenda' },
+                  ] as const
+                ).map(({ id: alignId, icon: Icon, title }) => {
+                  const defaultAlign =
+                    activeImageRecord.captionPosition === 'left' ||
+                    activeImageRecord.captionPosition === 'right'
+                      ? 'left'
+                      : 'center';
+                  const active = (activeImageRecord.textAlign ?? defaultAlign) === alignId;
+                  return (
+                    <button
+                      key={`ica-${alignId}`}
+                      type="button"
+                      title={title}
+                      onClick={() => updateCanvasNode(activeImageRecord.id, { textAlign: alignId })}
+                      className={`rounded p-1 transition ${
+                        active
+                          ? 'bg-indigo-600/30 text-indigo-200'
+                          : 'text-zinc-400 hover:text-zinc-100'
+                      }`}
+                    >
+                      <Icon className="h-3 w-3" />
+                    </button>
+                  );
+                })}
+              </div>
 
               <div className="h-4 w-px bg-zinc-800" />
 
@@ -4584,14 +4868,20 @@ const handleCreateQuickText = async (
                 <Type className="h-3.5 w-3.5 text-amber-400" /> Texto
               </button>
               <button
-                onClick={() => imageInputRef.current?.click()}
+                onClick={() => {
+                  pendingMediaConnectionRef.current = null;
+                  imageInputRef.current?.click();
+                }}
                 className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs text-zinc-300 transition hover:bg-zinc-800"
                 title="Inserir imagem livre no Canvas (ou arraste / Ctrl+V)"
               >
                 <ImagePlus className="h-3.5 w-3.5 text-sky-400" /> Imagem
               </button>
               <button
-                onClick={() => setIsStickerPanelOpen((v) => !v)}
+                onClick={() => {
+                  pendingMediaConnectionRef.current = null;
+                  setIsStickerPanelOpen((v) => !v);
+                }}
                 className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs transition ${
                   isStickerPanelOpen
                     ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40'
@@ -4612,9 +4902,20 @@ const handleCreateQuickText = async (
         )}
       </ReactFlow>
 
+      <ConnectionQuickMenu
+        isOpen={Boolean(connectMenu)}
+        screenX={connectMenu?.screenX ?? 0}
+        screenY={connectMenu?.screenY ?? 0}
+        onSelect={handleSelectQuickConnect}
+        onClose={() => setConnectMenu(null)}
+      />
+
       <StickerLibraryPanel
         isOpen={isStickerPanelOpen}
-        onClose={() => setIsStickerPanelOpen(false)}
+        onClose={() => {
+          pendingMediaConnectionRef.current = null;
+          setIsStickerPanelOpen(false);
+        }}
         onInsertSvg={insertSvgElementToCanvas}
       />
 

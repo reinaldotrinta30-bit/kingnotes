@@ -33,6 +33,32 @@ export function setCardPreviewCache(cardId: string, doc: Record<string, unknown>
   previewCache.set(cardId, doc as unknown as TipTapNode);
 }
 
+export function isPlaceholderExcerpt(excerpt?: string | null): boolean {
+  const trimmed = (excerpt ?? '').trim();
+  return !trimmed || trimmed === 'Clique para editar seu conhecimento...';
+}
+
+export function hasMeaningfulTipTapContent(node?: unknown): boolean {
+  if (!node || typeof node !== 'object') return false;
+  const n = node as TipTapNode;
+  if (n.type === 'text' && Boolean(n.text?.trim())) return true;
+  if (
+    n.type === 'image' ||
+    n.type === 'mathBlock' ||
+    n.type === 'mermaidBlock' ||
+    n.type === 'wikiLink' ||
+    n.type === 'table' ||
+    n.type === 'horizontalRule' ||
+    n.type === 'codeBlock'
+  ) {
+    return true;
+  }
+  if (Array.isArray(n.content)) {
+    return n.content.some((child) => hasMeaningfulTipTapContent(child));
+  }
+  return false;
+}
+
 export function buildTypographyCssVars(
   typography?: TextTypographyConfig,
   defaults: Required<TextTypographyConfig> = DEFAULT_CARD_TYPOGRAPHY,
@@ -333,6 +359,7 @@ interface CardRichPreviewProps {
   updatedAt: number;
   fallbackExcerpt: string;
   typography?: TextTypographyConfig;
+  onEmptyChange?: (isEmpty: boolean) => void;
 }
 
 export function CardRichPreview({
@@ -340,6 +367,7 @@ export function CardRichPreview({
   updatedAt,
   fallbackExcerpt,
   typography,
+  onEmptyChange,
 }: CardRichPreviewProps) {
   const [doc, setDoc] = useState<TipTapNode | null>(() => previewCache.get(cardId) ?? null);
 
@@ -366,7 +394,14 @@ export function CardRichPreview({
   }, [cardId, updatedAt]);
 
   const typoStyle = buildTypographyCssVars(typography, DEFAULT_CARD_TYPOGRAPHY);
-  const hasDocContent = Boolean(doc?.content && doc.content.length > 0);
+  const hasDocContent = doc ? hasMeaningfulTipTapContent(doc) : null;
+  const isEmpty = hasDocContent !== null ? !hasDocContent : isPlaceholderExcerpt(fallbackExcerpt);
+
+  useEffect(() => {
+    onEmptyChange?.(isEmpty);
+  }, [isEmpty, onEmptyChange]);
+
+  if (isEmpty) return null;
 
   if (!hasDocContent) {
     return (

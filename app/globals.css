@@ -646,10 +646,8 @@ html.paper .kc-paper-cornell {
    ============================================================================ */
 html[data-custom-font="active"] .ProseMirror,
 html[data-custom-font="active"] .kc-inline-prose,
-html[data-custom-font="active"] .react-flow__node h3,
-html[data-custom-font="active"] .react-flow__node input,
 html[data-custom-font="active"] .book-prose {
-  font-family: var(--kc-custom-font), var(--font-sans), sans-serif !important;
+  font-family: var(--kc-font-family, var(--kc-custom-font), var(--font-sans), sans-serif) !important;
 }
 
 /* ============================================================================
@@ -657,6 +655,7 @@ html[data-custom-font="active"] .book-prose {
    ============================================================================ */
 .kc-free-text-prose {
   color: inherit !important;
+  font-family: var(--kc-font-family, inherit);
   font-size: var(--kc-font-size, inherit) !important;
   line-height: var(--kc-line-height, 1.48) !important;
 }
@@ -704,8 +703,7 @@ html[data-custom-font="active"] .book-prose {
 }
 
 html[data-custom-font="active"] .kc-free-text-prose {
-  font-family: var(--kc-custom-font), var(--font-sans), sans-serif !important;
-  font-family: var(--kc-font-family, inherit) !important;
+  font-family: var(--kc-font-family, var(--kc-custom-font), var(--font-sans), sans-serif) !important;
 }
 
 /* ============================================================================

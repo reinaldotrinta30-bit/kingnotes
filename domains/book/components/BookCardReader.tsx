@@ -31,6 +31,7 @@ import { StudyTapeMark } from '@/domains/knowledge/extensions/StudyTapeMark';
 import { StudyUnderlineMark } from '@/domains/knowledge/extensions/StudyUnderlineMark';
 import { buildTypographyCssVars } from '@/domains/canvas/components/CardRichPreview';
 import { CalloutBadge } from '@/domains/canvas/components/CalloutBadge';
+import { StudyUnderlinePicker } from '@/domains/canvas/components/StudyUnderlinePicker';
 import { resolveCardTitleStyle } from '@/domains/knowledge/utils/defaults';
 import { StudyFontMark } from '@/domains/knowledge/extensions/StudyFontMark';
 import { getFontFamilyCss, getTextEffectClass } from '@/domains/canvas/utils/studyFonts';
@@ -310,6 +311,8 @@ export function BookCardReader({
               Limpar
             </button>
           </div>
+          <div className="h-3.5 w-px bg-zinc-800" />
+          <StudyUnderlinePicker editor={editor} onAfterApply={persistHighlightChange} />
           <div className="h-3.5 w-px bg-zinc-800" />
           <div className="flex items-center gap-1">
             {PEN_COLORS.map((c) => (

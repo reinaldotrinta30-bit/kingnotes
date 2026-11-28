@@ -553,7 +553,7 @@ export function KnowledgeCardEditorPane({
       const startCoords = ed.view.coordsAtPos(from);
       const endCoords = ed.view.coordsAtPos(to);
       const centerX = (startCoords.left + endCoords.right) / 2;
-      const bubbleWidth = 370;
+      const bubbleWidth = 430;
 
       setBubbleMenu({
         top: Math.max(62, startCoords.top - 52),
@@ -958,7 +958,7 @@ export function KnowledgeCardEditorPane({
   };
 
   return (
-    <div className="relative flex h-full min-w-0 flex-1 flex-col bg-[#13161C]/98">
+    <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#13161C]/98">
       {/* CABEÇALHO DO EDITOR AVANÇADO (ACOMODA A BARRA DE FORMATAÇÃO NO MODO AMPLIADO) */}
       <header className="relative z-30 flex shrink-0 items-center justify-between gap-2 border-b border-zinc-800/80 px-4 py-2.5">
         {/* Esquerda: Identificação compacta + Status de Salvamento */}
@@ -1134,7 +1134,7 @@ export function KnowledgeCardEditorPane({
       </header>
 
       {/* CORPO EM DUAS COLUNAS RESPONSIVAS: CONTEÚDO + INSPETOR */}
-      <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
         <div
           className="min-h-0 flex-1 overflow-y-auto px-6 py-6 md:px-10"
           onClick={() => {
@@ -1306,6 +1306,8 @@ export function KnowledgeCardEditorPane({
           ) : (
             <div className="flex items-center gap-1">
               <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={`rounded-lg p-1.5 ${editor.isActive('bold') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Negrito"><Bold className="h-3.5 w-3.5" /></button>
+              <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={`rounded-lg p-1.5 ${editor.isActive('italic') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Itálico"><Italic className="h-3.5 w-3.5" /></button>
+              <StudyUnderlinePicker editor={editor} />
               <button type="button" onClick={() => editor.chain().focus().toggleHighlight({ color: '#fde047' }).run()} className={`rounded-lg p-1.5 ${editor.isActive('highlight') ? 'bg-amber-500/25 text-amber-300' : 'text-amber-300 hover:bg-zinc-800'}`} title="Destacar"><Highlighter className="h-3.5 w-3.5" /></button>
               <button type="button" onClick={() => editor.chain().focus().toggleBlockquote().run()} className={`rounded-lg p-1.5 ${editor.isActive('blockquote') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Citação"><Quote className="h-3.5 w-3.5" /></button>
 

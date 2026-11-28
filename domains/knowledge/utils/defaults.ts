@@ -127,6 +127,7 @@ export interface ResolvedCardTitleStyle {
   letterSpacing: number;
   underlineColor: string;
   underlineStyle: NonNullable<CardTitleStyle['underlineStyle']>;
+  highlightColor: string;
 }
 
 export const DEFAULT_CARD_TITLE_STYLE: ResolvedCardTitleStyle = {
@@ -145,6 +146,7 @@ export const DEFAULT_CARD_TITLE_STYLE: ResolvedCardTitleStyle = {
   letterSpacing: 0,
   underlineColor: '',
   underlineStyle: 'solid',
+  highlightColor: '',
 };
 
 export function resolveCardTitleStyle(meta?: {
@@ -169,5 +171,6 @@ export function resolveCardTitleStyle(meta?: {
     letterSpacing: Math.round(clampNumber(ts?.letterSpacing ?? 0, -0.04, 0.22, 0) * 100) / 100,
     underlineColor: ts?.underlineColor ?? '',
     underlineStyle: ts?.underlineStyle ?? DEFAULT_CARD_TITLE_STYLE.underlineStyle,
+    highlightColor: ts?.highlightColor ?? '',
   };
 }

@@ -39,11 +39,15 @@ export function buildTypographyCssVars(
   legacyFontSize?: number
 ): React.CSSProperties {
   const resolved = resolveTypography(typography, defaults, legacyFontSize);
+  const customStudyFont =
+    resolved.fontFamily && resolved.fontFamily !== 'default'
+      ? getFontFamilyCss(resolved.fontFamily)
+      : undefined;
   return {
     ['--kc-font-size' as string]: `${resolved.fontSize}px`,
     ['--kc-line-height' as string]: String(resolved.lineHeight),
     ['--kc-p-spacing' as string]: `${resolved.paragraphSpacing}px`,
-    ['--kc-font-family' as string]: getFontFamilyCss(resolved.fontFamily),
+    ...(customStudyFont ? { ['--kc-font-family' as string]: customStudyFont } : {}),
     ['--kc-fx-color' as string]: resolved.effectColor,
   };
 }
@@ -159,9 +163,7 @@ function renderMarks(text: string, marks?: TipTapMark[]): React.ReactNode {
       case 'studyTape':
         node = <StudyTapeSpan>{node}</StudyTapeSpan>;
         break;
-      default:
-        break;
-        case 'studyUnderline': {
+      case 'studyUnderline': {
         const ulColor = (mark.attrs?.color as string | undefined) || '#ef4444';
         const variant = (mark.attrs?.variant as string | undefined) || 'brush';
         node = (
@@ -186,6 +188,8 @@ function renderMarks(text: string, marks?: TipTapMark[]): React.ReactNode {
         }
         break;
       }
+      default:
+        break;
     }
     
   }

@@ -65,12 +65,14 @@ interface CardTitleStyleControlsProps {
   value?: CardTitleStyle;
   fallbackTypography?: TextTypographyConfig;
   onChange: (next: CardTitleStyle) => void;
+  hideBannerBg?: boolean;
 }
 
 export function CardTitleStyleControls({
   value,
   fallbackTypography,
   onChange,
+  hideBannerBg = false,
 }: CardTitleStyleControlsProps) {
   const current = resolveCardTitleStyle({
     titleStyle: value,
@@ -83,6 +85,7 @@ export function CardTitleStyleControls({
       color: current.color || undefined,
       bgColor: current.bgColor || undefined,
       underlineColor: current.underlineColor || undefined,
+      highlightColor: current.highlightColor || undefined,
       ...patch,
     });
   };
@@ -363,7 +366,35 @@ export function CardTitleStyleControls({
         </div>
 
         <div className="flex items-center justify-between gap-1.5">
-          <span className="text-[10px] font-semibold uppercase text-zinc-500">Faixa</span>
+          <span className="text-[10px] font-semibold uppercase text-zinc-500">Marca</span>
+          <div className="flex items-center gap-1">
+            {[
+              { label: 'Sem marca-texto', value: '' },
+              { label: 'Amarelo', value: 'rgba(250, 204, 21, 0.36)' },
+              { label: 'Verde', value: 'rgba(52, 211, 153, 0.32)' },
+              { label: 'Azul', value: 'rgba(56, 189, 248, 0.32)' },
+              { label: 'Rosa', value: 'rgba(251, 113, 133, 0.34)' },
+              { label: 'Roxo', value: 'rgba(167, 139, 250, 0.34)' },
+            ].map((hl) => (
+              <button
+                key={`thlc-${hl.label}`}
+                type="button"
+                title={hl.label}
+                onClick={() => patchTitle({ highlightColor: hl.value || undefined })}
+                className={`flex h-4 w-4 items-center justify-center rounded border text-[8px] font-bold text-zinc-400 transition hover:scale-125 ${
+                  current.highlightColor === hl.value ? 'scale-110 border-white' : 'border-zinc-700'
+                }`}
+                style={hl.value ? { backgroundColor: hl.value } : undefined}
+              >
+                {!hl.value && '✕'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {!hideBannerBg && (
+          <div className="flex items-center justify-between gap-1.5">
+            <span className="text-[10px] font-semibold uppercase text-zinc-500">Faixa</span>
           <div className="flex items-center gap-1">
             {TITLE_BG_COLORS.map((hex) => (
               <button
@@ -387,7 +418,8 @@ export function CardTitleStyleControls({
               title="Cor personalizada da faixa"
             />
           </div>
-        </div>
+          </div>
+        )}
       </div>
 
       {/* 5. Efeito Lettering */}

@@ -1566,10 +1566,52 @@ export function EditableEdge({
                 }`}
               >
                 <span
-  className={`w-full select-none whitespace-pre-wrap break-words leading-snug ${getTextEffectClass(labelStyle?.textEffect)}`}
->
-  {label}
-</span>
+                  style={{
+                    fontStyle: labelStyle?.italic ? 'italic' : 'normal',
+                    textDecorationLine:
+                      [
+                        labelStyle?.underline && labelStyle.underlineStyle !== 'brush'
+                          ? 'underline'
+                          : '',
+                        labelStyle?.strikethrough ? 'line-through' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ') || 'none',
+                    textDecorationStyle:
+                      labelStyle?.underline && labelStyle.underlineStyle !== 'brush'
+                        ? labelStyle.underlineStyle ?? 'solid'
+                        : undefined,
+                    textDecorationColor:
+                      labelStyle?.underline &&
+                      labelStyle.underlineStyle !== 'brush' &&
+                      labelStyle.underlineColor
+                        ? labelStyle.underlineColor
+                        : undefined,
+                    textUnderlineOffset:
+                      labelStyle?.underline && labelStyle.underlineStyle !== 'brush'
+                        ? '3px'
+                        : undefined,
+                    textDecorationThickness:
+                      labelStyle?.underline && labelStyle.underlineStyle !== 'brush'
+                        ? '2px'
+                        : undefined,
+                    ...(labelStyle?.underline && labelStyle.underlineStyle === 'brush'
+                      ? {
+                          ['--kc-ul-color' as string]:
+                            labelStyle.underlineColor || labelVisual.text,
+                        }
+                      : {}),
+                  }}
+                  className={`w-full select-none whitespace-pre-wrap break-words leading-snug ${getTextEffectClass(
+                    labelStyle?.textEffect
+                  )} ${
+                    labelStyle?.underline && labelStyle.underlineStyle === 'brush'
+                      ? 'kc-ul kc-ul-brush'
+                      : ''
+                  }`}
+                >
+                  {label}
+                </span>
 
                 {/* Excluir apenas o rótulo */}
                 <button

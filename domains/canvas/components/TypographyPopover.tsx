@@ -29,6 +29,8 @@ interface TypographyPopoverProps {
   titleStyle?: CardTitleStyle;
   onTitleStyleChange?: (next: CardTitleStyle) => void;
   onTitleStyleReset?: () => void;
+  singleTitleMode?: boolean;
+  hideBannerBg?: boolean;
   hideSpacingControls?: boolean;
   align?: 'left' | 'right';
   compact?: boolean;
@@ -43,6 +45,8 @@ export function TypographyPopover({
   titleStyle,
   onTitleStyleChange,
   onTitleStyleReset,
+  singleTitleMode = false,
+  hideBannerBg = false,
   hideSpacingControls = false,
   align = 'left',
   compact = false,
@@ -51,8 +55,12 @@ export function TypographyPopover({
   const [targetTab, setTargetTab] = useState<'body' | 'title'>('title');
   const rootRef = useRef<HTMLDivElement>(null);
 
-  const supportsTitleTab = Boolean(onTitleStyleChange);
-  const effectiveTab = supportsTitleTab ? targetTab : 'body';
+  const supportsTitleTab = Boolean(onTitleStyleChange) && !singleTitleMode;
+  const effectiveTab = singleTitleMode && onTitleStyleChange
+    ? 'title'
+    : supportsTitleTab
+    ? targetTab
+    : 'body';
   const current = resolveTypography(value, defaults, legacyFontSize);
 
   const isBodyCustomized =
@@ -64,8 +72,14 @@ export function TypographyPopover({
 
   const isTitleCustomized = Boolean(titleStyle && Object.keys(titleStyle).length > 0);
 
+  const displayFontId = singleTitleMode
+    ? titleStyle?.fontFamily ?? current.fontFamily
+    : current.fontFamily;
+  const displayFontSize = singleTitleMode
+    ? titleStyle?.fontSize ?? current.fontSize
+    : current.fontSize;
   const activeFontLabel =
-    STUDY_FONT_OPTIONS.find((f) => f.id === current.fontFamily)?.label ?? 'Padrão';
+    STUDY_FONT_OPTIONS.find((f) => f.id === displayFontId)?.label ?? 'Padrão';
 
   useEffect(() => {
     if (!open) return;
@@ -97,16 +111,16 @@ export function TypographyPopover({
         title="Personalizar fonte, alinhamento, lettering, tamanho e espaçamentos"
       >
         <Type className="h-3.5 w-3.5 shrink-0 text-indigo-400" />
-        {!compact && current.fontFamily !== 'default' && (
+        {!compact && displayFontId !== 'default' && (
           <span className="max-w-[66px] truncate font-medium">{activeFontLabel}</span>
         )}
-        <span className="font-mono text-[10.5px]">{current.fontSize}px</span>
+        <span className="font-mono text-[10.5px]">{displayFontSize}px</span>
       </button>
 
       {open && (
         <div
           onMouseDown={(e) => e.stopPropagation()}
-          className={`absolute top-full z-[150] mt-2 max-h-[78vh] w-80 space-y-3.5 overflow-y-auto rounded-2xl border border-zinc-800 bg-[#161920]/98 p-4 text-left shadow-2xl backdrop-blur-xl ${
+          className={`kc-no-scrollbar absolute top-full z-[150] mt-2 max-h-[76vh] w-80 space-y-3.5 overflow-y-auto rounded-2xl border border-zinc-800 bg-[#161920]/98 p-4 text-left shadow-2xl backdrop-blur-xl ${
             align === 'right' ? 'right-0' : 'left-0'
           }`}
         >
@@ -160,6 +174,7 @@ export function TypographyPopover({
               value={titleStyle}
               fallbackTypography={value}
               onChange={onTitleStyleChange}
+              hideBannerBg={hideBannerBg}
             />
           ) : (
             <div className="space-y-3.5">

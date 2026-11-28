@@ -65,6 +65,8 @@ import {
   GitBranch,
   Tag,
   Bold,
+  Italic,
+  Underline as UnderlineIcon,
   ArrowLeft,
   Wand2,
   Pencil,
@@ -98,6 +100,7 @@ import { HierarchyFolderNode } from './HierarchyFolderNode';
 import { HierarchySlideNode } from './HierarchySlideNode';
 import { computeCanvasExplorerLayout } from '../utils/canvasExplorerLayout';
 import { TypographyPopover } from './TypographyPopover';
+import { StudyUnderlinePicker } from './StudyUnderlinePicker';
 import { CalloutCustomizerPopover } from './CalloutCustomizerPopover';
 import {
   DEFAULT_CARD_TYPOGRAPHY,
@@ -3662,20 +3665,128 @@ const handleCreateQuickText = async (
                 <option value="hexagon">Hexágono</option>
               </select>
 
+              {/* Tipografia, Cor, Alinhamento, Peso, Sublinhado & Lettering do Tópico */}
               <TypographyPopover
+                singleTitleMode
+                hideBannerBg
                 value={activeTopicRecord.typography}
                 legacyFontSize={activeTopicRecord.fontSize}
                 defaults={DEFAULT_TOPIC_TYPOGRAPHY}
-                onChange={(next) =>
-                  updateCanvasNode(activeTopicRecord.id, {
-                    typography: next,
-                    fontSize: next.fontSize,
-                  })
-                }
+                onChange={() => {}}
                 onReset={() =>
                   updateCanvasNode(activeTopicRecord.id, {
                     typography: undefined,
                     fontSize: DEFAULT_TOPIC_TYPOGRAPHY.fontSize,
+                    textColor: undefined,
+                    textAlign: 'center',
+                    topicConfig: {
+                      ...(activeTopicRecord.topicConfig ?? { shape: 'rounded' }),
+                      textStyle: undefined,
+                    },
+                  })
+                }
+                titleStyle={{
+                  fontFamily:
+                    activeTopicRecord.topicConfig?.textStyle?.fontFamily ??
+                    activeTopicRecord.typography?.fontFamily,
+                  fontSize:
+                    activeTopicRecord.topicConfig?.textStyle?.fontSize ??
+                    activeTopicRecord.typography?.fontSize ??
+                    activeTopicRecord.fontSize ??
+                    DEFAULT_TOPIC_TYPOGRAPHY.fontSize,
+                  color:
+                    activeTopicRecord.topicConfig?.textStyle?.color ??
+                    activeTopicRecord.textColor,
+                  textAlign:
+                    activeTopicRecord.topicConfig?.textStyle?.textAlign ??
+                    activeTopicRecord.textAlign ??
+                    'center',
+                  textEffect:
+                    activeTopicRecord.topicConfig?.textStyle?.textEffect ??
+                    activeTopicRecord.typography?.textEffect,
+                  effectColor:
+                    activeTopicRecord.topicConfig?.textStyle?.effectColor ??
+                    activeTopicRecord.typography?.effectColor,
+                  fontWeight:
+                    activeTopicRecord.topicConfig?.textStyle?.fontWeight ?? 'semibold',
+                  italic: activeTopicRecord.topicConfig?.textStyle?.italic,
+                  underline: activeTopicRecord.topicConfig?.textStyle?.underline,
+                  underlineStyle: activeTopicRecord.topicConfig?.textStyle?.underlineStyle,
+                  underlineColor: activeTopicRecord.topicConfig?.textStyle?.underlineColor,
+                  strikethrough: activeTopicRecord.topicConfig?.textStyle?.strikethrough,
+                  textTransform: activeTopicRecord.topicConfig?.textStyle?.textTransform,
+                  letterSpacing: activeTopicRecord.topicConfig?.textStyle?.letterSpacing,
+                }}
+                onTitleStyleChange={(next) =>
+                  updateCanvasNode(activeTopicRecord.id, {
+                    fontSize: next.fontSize ?? activeTopicRecord.fontSize,
+                    textColor: next.color || undefined,
+                    textAlign: next.textAlign ?? activeTopicRecord.textAlign ?? 'center',
+                    typography: {
+                      ...DEFAULT_TOPIC_TYPOGRAPHY,
+                      ...activeTopicRecord.typography,
+                      fontSize: next.fontSize ?? activeTopicRecord.fontSize ?? DEFAULT_TOPIC_TYPOGRAPHY.fontSize,
+                      fontFamily: next.fontFamily ?? 'default',
+                      textEffect: next.textEffect ?? 'none',
+                      effectColor: next.effectColor ?? '#0f172a',
+                    },
+                    topicConfig: {
+                      ...(activeTopicRecord.topicConfig ?? { shape: 'rounded' }),
+                      textStyle: next,
+                    },
+                  })
+                }
+                onTitleStyleReset={() =>
+                  updateCanvasNode(activeTopicRecord.id, {
+                    typography: undefined,
+                    fontSize: DEFAULT_TOPIC_TYPOGRAPHY.fontSize,
+                    textColor: undefined,
+                    textAlign: 'center',
+                    topicConfig: {
+                      ...(activeTopicRecord.topicConfig ?? { shape: 'rounded' }),
+                      textStyle: undefined,
+                    },
+                  })
+                }
+              />
+
+              {/* Pincel verde: Sublinhado colorido direto na barra do Tópico */}
+              <StudyUnderlinePicker
+                active={Boolean(
+                  activeTopicRecord.topicConfig?.textStyle?.underline &&
+                    activeTopicRecord.topicConfig?.textStyle?.underlineStyle !== 'solid'
+                )}
+                valueVariant={
+                  activeTopicRecord.topicConfig?.textStyle?.underlineStyle &&
+                  activeTopicRecord.topicConfig?.textStyle?.underlineStyle !== 'solid'
+                    ? activeTopicRecord.topicConfig.textStyle.underlineStyle
+                    : 'brush'
+                }
+                valueColor={activeTopicRecord.topicConfig?.textStyle?.underlineColor}
+                onApplyStyle={(variant, color) =>
+                  updateCanvasNode(activeTopicRecord.id, {
+                    topicConfig: {
+                      ...(activeTopicRecord.topicConfig ?? { shape: 'rounded' }),
+                      textStyle: {
+                        ...(activeTopicRecord.topicConfig?.textStyle ?? {}),
+                        underline: true,
+                        underlineStyle: variant,
+                        underlineColor: color,
+                      },
+                    },
+                  })
+                }
+                onClearStyle={() =>
+                  updateCanvasNode(activeTopicRecord.id, {
+                    topicConfig: {
+                      ...(activeTopicRecord.topicConfig ?? { shape: 'rounded' }),
+                      textStyle: {
+                        ...(activeTopicRecord.topicConfig?.textStyle ?? {}),
+                        underline: false,
+                        underlineStyle: 'solid',
+                        underlineColor: undefined,
+                      },
+                    },
                   })
                 }
               />
@@ -3691,9 +3802,22 @@ const handleCreateQuickText = async (
                   <button
                     key={`ta-${id}`}
                     type="button"
-                    onClick={() => updateCanvasNode(activeTopicRecord.id, { textAlign: id })}
+                    onClick={() =>
+                      updateCanvasNode(activeTopicRecord.id, {
+                        textAlign: id,
+                        topicConfig: {
+                          ...(activeTopicRecord.topicConfig ?? { shape: 'rounded' }),
+                          textStyle: {
+                            ...(activeTopicRecord.topicConfig?.textStyle ?? {}),
+                            textAlign: id,
+                          },
+                        },
+                      })
+                    }
                     className={`rounded p-1 ${
-                      (activeTopicRecord.textAlign ?? 'center') === id
+                      (activeTopicRecord.topicConfig?.textStyle?.textAlign ??
+                        activeTopicRecord.textAlign ??
+                        'center') === id
                         ? 'bg-indigo-600/30 text-indigo-200'
                         : 'text-zinc-400 hover:text-zinc-100'
                     }`}
@@ -4249,6 +4373,56 @@ const handleCreateQuickText = async (
                   >
                     <Bold className="h-3 w-3" />
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => updateLabelStyle({ italic: !ls.italic })}
+                    className={`rounded-lg border p-1.5 transition ${
+                      ls.italic
+                        ? 'border-indigo-500 bg-indigo-600/25 text-indigo-200'
+                        : 'border-zinc-800 bg-[#0F1115] text-zinc-400 hover:text-white'
+                    }`}
+                    title="Itálico"
+                  >
+                    <Italic className="h-3 w-3" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => updateLabelStyle({ underline: !ls.underline })}
+                    className={`rounded-lg border p-1.5 transition ${
+                      ls.underline
+                        ? 'border-indigo-500 bg-indigo-600/25 text-indigo-200'
+                        : 'border-zinc-800 bg-[#0F1115] text-zinc-400 hover:text-white'
+                    }`}
+                    title="Sublinhado"
+                  >
+                    <UnderlineIcon className="h-3 w-3" />
+                  </button>
+
+                  <StudyUnderlinePicker
+                    active={Boolean(ls.underline && ls.underlineStyle !== 'solid')}
+                    valueVariant={
+                      ls.underlineStyle && ls.underlineStyle !== 'solid'
+                        ? ls.underlineStyle
+                        : 'brush'
+                    }
+                    valueColor={ls.underlineColor}
+                    onApplyStyle={(variant, color) =>
+                      updateLabelStyle({
+                        underline: true,
+                        underlineStyle: variant,
+                        underlineColor: color,
+                      })
+                    }
+                    onClearStyle={() =>
+                      updateLabelStyle({
+                        underline: false,
+                        underlineStyle: 'solid',
+                        underlineColor: undefined,
+                      })
+                    }
+                  />
 
                   <div className="flex items-center gap-0.5 rounded-lg border border-zinc-800 bg-[#0F1115] p-0.5">
                     {(

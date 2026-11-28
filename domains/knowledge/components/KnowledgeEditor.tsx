@@ -101,10 +101,10 @@ export function KnowledgeEditorDrawer() {
             }
           >
             <div
-              className={`grid h-full w-full ${
+              className={`grid h-full min-h-0 w-full ${
                 isSplitActive
-                  ? 'grid-cols-1 divide-y divide-zinc-800 lg:grid-cols-2 lg:divide-x lg:divide-y-0'
-                  : 'grid-cols-1'
+                  ? 'grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] divide-y divide-zinc-800 lg:grid-cols-2 lg:grid-rows-[minmax(0,1fr)] lg:divide-x lg:divide-y-0'
+                  : 'grid-cols-1 grid-rows-[minmax(0,1fr)]'
               }`}
             >
               <KnowledgeCardEditorPane

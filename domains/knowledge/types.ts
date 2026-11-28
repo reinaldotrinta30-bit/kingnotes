@@ -60,6 +60,7 @@ export interface CardTitleStyle {
   letterSpacing?: number; // em (ex: -0.02 a 0.20)
   underlineColor?: string;
   underlineStyle?: 'solid' | 'brush' | 'wavy' | 'double' | 'dashed';
+  highlightColor?: string;
 }
 
 /** Observação Rápida / Pegadinha da Banca personalizável */
@@ -109,6 +110,7 @@ export interface TopicNodeConfig {
   shadow?: 'none' | 'sm' | 'md' | 'glow';
   icon?: string;
   doubleBorder?: boolean;
+  textStyle?: CardTitleStyle;
   parentTopicId?: string | null;
   defaultEdgeStyle?: {
     edgeType?: CanvasEdgePathType;
@@ -309,6 +311,11 @@ export interface EdgeLabelStyle {
   textEffect?: TextEffectId;
   effectColor?: string;
   fontWeight?: 'normal' | 'medium' | 'bold';
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  underlineStyle?: 'solid' | 'brush' | 'wavy' | 'double' | 'dashed';
+  underlineColor?: string;
   textAlign?: 'left' | 'center' | 'right';
   rotation?: number;    // Ângulo manual em graus (-180 a 180)
   autoRotate?: boolean; // Alinha automaticamente ao ângulo do segmento da seta

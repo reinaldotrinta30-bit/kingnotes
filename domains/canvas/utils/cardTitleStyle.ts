@@ -50,7 +50,7 @@ export function buildCardTitleRenderProps(
     color: ts.color || undefined,
     textDecorationLine: decoLines.length > 0 ? decoLines.join(' ') : 'none',
     textDecorationStyle:
-      ts.underline && !isBrushUnderline ? ts.underlineStyle : undefined,
+      ts.underline && ts.underlineStyle !== 'brush' ? ts.underlineStyle : undefined,
     textDecorationColor:
       ts.underline && !isBrushUnderline && ts.underlineColor
         ? ts.underlineColor
@@ -61,6 +61,15 @@ export function buildCardTitleRenderProps(
     ['--kc-fx-start' as string]: ts.color || '#f4f4f5',
     ...(isBrushUnderline
       ? { ['--kc-ul-color' as string]: ts.underlineColor || ts.color || '#f59e0b' }
+      : {}),
+    ...(ts.highlightColor && ts.textEffect !== 'gradient'
+      ? {
+          backgroundColor: ts.highlightColor,
+          padding: '0 4px',
+          borderRadius: '4px',
+          boxDecorationBreak: 'clone' as const,
+          WebkitBoxDecorationBreak: 'clone' as const,
+        }
       : {}),
   };
 

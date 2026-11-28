@@ -3,14 +3,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Editor } from '@tiptap/react';
 import { Type } from 'lucide-react';
+import { StudyFontId } from '@/domains/knowledge/types';
 import { STUDY_FONT_OPTIONS } from '@/domains/canvas/utils/studyFonts';
 
 interface StudyFontPickerProps {
-  editor: Editor;
+  editor?: Editor | null;
+  valueFontId?: StudyFontId;
+  onSelectFont?: (fontId: StudyFontId) => void;
   align?: 'left' | 'right';
 }
 
-export function StudyFontPicker({ editor, align = 'left' }: StudyFontPickerProps) {
+export function StudyFontPicker({
+  editor,
+  valueFontId,
+  onSelectFont,
+  align = 'left',
+}: StudyFontPickerProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -25,7 +33,10 @@ export function StudyFontPicker({ editor, align = 'left' }: StudyFontPickerProps
     return () => document.removeEventListener('mousedown', handleOutside);
   }, [open]);
 
-  const activeFontId = (editor.getAttributes('studyFont')?.fontId as string | undefined) ?? 'default';
+  const isControlled = Boolean(onSelectFont);
+  const activeFontId = isControlled
+    ? valueFontId ?? 'default'
+    : ((editor?.getAttributes('studyFont')?.fontId as StudyFontId | undefined) ?? 'default');
   const activeOption = STUDY_FONT_OPTIONS.find((f) => f.id === activeFontId);
 
   return (
@@ -43,7 +54,7 @@ export function StudyFontPicker({ editor, align = 'left' }: StudyFontPickerProps
             ? 'bg-indigo-600/25 text-indigo-200'
             : 'text-zinc-300 hover:bg-zinc-800 hover:text-white'
         }`}
-        title="Aplicar fonte de caderno / lettering apenas no trecho selecionado"
+        title="Trocar fonte de caderno / lettering"
       >
         <Type className="h-3.5 w-3.5 text-indigo-400" />
         <span
@@ -56,7 +67,7 @@ export function StudyFontPicker({ editor, align = 'left' }: StudyFontPickerProps
 
       {open && (
         <div
-          className={`absolute top-full z-[150] mt-2 grid w-64 grid-cols-2 gap-1 rounded-xl border border-zinc-800 bg-[#161920]/98 p-2 shadow-2xl backdrop-blur-xl ${
+          className={`absolute top-full z-[160] mt-2 grid w-64 grid-cols-2 gap-1 rounded-xl border border-zinc-800 bg-[#161920]/98 p-2 shadow-2xl backdrop-blur-xl ${
             align === 'right' ? 'right-0' : 'left-0'
           }`}
         >
@@ -65,10 +76,14 @@ export function StudyFontPicker({ editor, align = 'left' }: StudyFontPickerProps
               key={font.id}
               type="button"
               onClick={() => {
-                if (font.id === 'default') {
-                  editor.chain().focus().unsetMark('studyFont').run();
-                } else {
-                  editor.chain().focus().setMark('studyFont', { fontId: font.id }).run();
+                if (isControlled && onSelectFont) {
+                  onSelectFont(font.id);
+                } else if (editor) {
+                  if (font.id === 'default') {
+                    editor.chain().focus().unsetMark('studyFont').run();
+                  } else {
+                    editor.chain().focus().setMark('studyFont', { fontId: font.id }).run();
+                  }
                 }
                 setOpen(false);
               }}

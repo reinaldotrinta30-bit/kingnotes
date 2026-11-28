@@ -337,7 +337,7 @@ function FreeTextInlineEditor({
       </div>
 
       {/* ÁREA DE DIGITAÇÃO */}
-      <div className="relative w-full cursor-text">
+      <div className={`relative w-full cursor-text ${getTextEffectClass(node.typography?.textEffect)}`}>
         {editor.isEmpty && (
           <span className="pointer-events-none absolute left-0 top-0 select-none text-zinc-500/80">
             Digite livremente...

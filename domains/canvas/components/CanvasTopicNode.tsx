@@ -2,19 +2,58 @@
 
 import React, { memo, useEffect, useId, useRef, useState } from 'react';
 import { Handle, Position, NodeProps, NodeResizer, useUpdateNodeInternals } from '@xyflow/react';
-import { Plus } from 'lucide-react';
-import { CanvasNodePosition, TopicShape } from '@/domains/knowledge/types';
-import { DEFAULT_TOPIC_TYPOGRAPHY, resolveTypography } from '@/domains/knowledge/utils/defaults';
+import {
+  Plus,
+  Check,
+  Bold,
+  Italic,
+  Underline as UnderlineIcon,
+  Strikethrough,
+  Highlighter,
+  Palette,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+} from 'lucide-react';
+import { CanvasNodePosition, CardTitleStyle, TopicShape } from '@/domains/knowledge/types';
+import {
+  DEFAULT_TOPIC_TYPOGRAPHY,
+  resolveCardTitleStyle,
+  resolveTypography,
+} from '@/domains/knowledge/utils/defaults';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
 import { useUiStore } from '@/domains/ui/store/useUiStore';
 import { hexToRgbaString } from '../utils/contrast';
-import { getFontFamilyCss, getTextEffectClass } from '../utils/studyFonts';
+import { buildCardTitleRenderProps } from '../utils/cardTitleStyle';
+import { TypographyPopover } from './TypographyPopover';
+import { StudyUnderlinePicker } from './StudyUnderlinePicker';
+import { StudyFontPicker } from './StudyFontPicker';
 
 const HANDLES = [
   { pos: Position.Top, id: 'top' },
   { pos: Position.Right, id: 'right' },
   { pos: Position.Bottom, id: 'bottom' },
   { pos: Position.Left, id: 'left' },
+];
+
+const QUICK_TOPIC_TEXT_COLORS = [
+  '',
+  '#ffffff',
+  '#18181b',
+  '#818cf8',
+  '#38bdf8',
+  '#34d399',
+  '#fbbf24',
+  '#fb7185',
+];
+
+const TOPIC_HIGHLIGHT_COLORS = [
+  { label: 'Sem marca', value: '' },
+  { label: 'Amarelo', value: 'rgba(250, 204, 21, 0.36)' },
+  { label: 'Verde', value: 'rgba(52, 211, 153, 0.32)' },
+  { label: 'Azul', value: 'rgba(56, 189, 248, 0.32)' },
+  { label: 'Rosa', value: 'rgba(251, 113, 133, 0.34)' },
+  { label: 'Roxo', value: 'rgba(167, 139, 250, 0.34)' },
 ];
 
 const BORDER_WIDTH_PX: Record<NonNullable<CanvasNodePosition['borderWidth']>, number> = {
@@ -68,11 +107,20 @@ export const CanvasTopicNode = memo(function CanvasTopicNode({
   const isEditing = editingTopicNodeId === id;
 
   const [draft, setDraft] = useState(node.label ?? 'Novo Tópico');
+  const [openPicker, setOpenPicker] = useState<null | 'color' | 'highlight'>(null);
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const nodeLabelRef = useRef(node.label ?? '');
+  nodeLabelRef.current = node.label ?? '';
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevEditingRef = useRef(false);
 
   useEffect(() => {
     if (!isEditing) {
       setDraft(node.label ?? '');
+      setOpenPicker(null);
     }
   }, [node.label, isEditing]);
 
@@ -86,17 +134,33 @@ export const CanvasTopicNode = memo(function CanvasTopicNode({
     }
   }, [isEditing]);
 
+  // Salva rascunho automaticamente ao sair da edição (clique fora, Esc ou OK)
+  useEffect(() => {
+    if (prevEditingRef.current && !isEditing) {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      const clean = draftRef.current.trim() || 'Tópico';
+      if (clean !== nodeLabelRef.current) {
+        updateCanvasNode(id, { label: clean });
+      }
+    }
+    prevEditingRef.current = isEditing;
+  }, [isEditing, id, updateCanvasNode]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, []);
+
   const shape: TopicShape = node.topicConfig?.shape ?? 'rounded';
   const shadow = node.topicConfig?.shadow ?? 'md';
   const icon = node.topicConfig?.icon;
   const isSketch = Boolean(node.sketch);
   const hasDoubleBorder = Boolean(node.topicConfig?.doubleBorder);
   const typo = resolveTypography(node.typography, DEFAULT_TOPIC_TYPOGRAPHY, node.fontSize);
-
-  useEffect(() => {
-    const t = setTimeout(() => updateNodeInternals(id), 35);
-    return () => clearTimeout(t);
-  }, [id, shape, node.width, node.height, typo.fontSize, isSketch, hasDoubleBorder, updateNodeInternals]);
 
   const bgOpacity = node.bgOpacity ?? 'tinted';
   const accentHex = node.bgColor ?? node.color ?? '#6366f1';
@@ -117,7 +181,102 @@ export const CanvasTopicNode = memo(function CanvasTopicNode({
 
   const defaultTextColor =
     bgOpacity === 'solid' ? '#ffffff' : theme === 'paper' ? '#18181b' : '#f4f4f5';
-  const textColor = node.textColor || defaultTextColor;
+
+  // Estilo textual unificado (herda configurações antigas de typography/textColor/textAlign sem quebrar nada)
+  const storedTs = node.topicConfig?.textStyle;
+  const resolvedTextStyle = resolveCardTitleStyle({
+    titleStyle: {
+      ...storedTs,
+      fontFamily: storedTs?.fontFamily ?? typo.fontFamily,
+      fontSize: storedTs?.fontSize ?? typo.fontSize,
+      color: storedTs?.color ?? node.textColor ?? '',
+      textAlign: storedTs?.textAlign ?? node.textAlign ?? 'center',
+      textEffect: storedTs?.textEffect ?? typo.textEffect,
+      effectColor: storedTs?.effectColor ?? typo.effectColor,
+      fontWeight: storedTs?.fontWeight ?? 'semibold',
+    },
+    typography: node.typography,
+  });
+
+  const effectiveTextColor = resolvedTextStyle.color || defaultTextColor;
+  const titleRender = buildCardTitleRenderProps({
+    ...resolvedTextStyle,
+    color: effectiveTextColor,
+  });
+
+  useEffect(() => {
+    const t = setTimeout(() => updateNodeInternals(id), 35);
+    return () => clearTimeout(t);
+  }, [
+    id,
+    shape,
+    node.width,
+    node.height,
+    resolvedTextStyle.fontSize,
+    isSketch,
+    hasDoubleBorder,
+    updateNodeInternals,
+  ]);
+
+  const applyTopicTextStyle = (next: CardTitleStyle) => {
+    const merged: CardTitleStyle = {
+      ...resolvedTextStyle,
+      color: resolvedTextStyle.color || undefined,
+      underlineColor: resolvedTextStyle.underlineColor || undefined,
+      highlightColor: resolvedTextStyle.highlightColor || undefined,
+      ...next,
+    };
+    const nextFontSize = merged.fontSize ?? typo.fontSize;
+    updateCanvasNode(id, {
+      fontSize: nextFontSize,
+      textColor: merged.color || undefined,
+      textAlign: merged.textAlign ?? 'center',
+      typography: {
+        ...typo,
+        fontSize: nextFontSize,
+        fontFamily: merged.fontFamily ?? typo.fontFamily,
+        textEffect: merged.textEffect ?? typo.textEffect,
+        effectColor: merged.effectColor ?? typo.effectColor,
+      },
+      topicConfig: {
+        ...(node.topicConfig ?? { shape }),
+        textStyle: merged,
+      },
+    });
+  };
+
+  const resetTopicTextStyle = () => {
+    updateCanvasNode(id, {
+      fontSize: DEFAULT_TOPIC_TYPOGRAPHY.fontSize,
+      textColor: undefined,
+      textAlign: 'center',
+      typography: undefined,
+      topicConfig: {
+        ...(node.topicConfig ?? { shape }),
+        textStyle: undefined,
+      },
+    });
+  };
+
+  const handleDraftChange = (val: string) => {
+    setDraft(val);
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      updateCanvasNode(id, { label: val.trim() || 'Tópico' });
+    }, 240);
+  };
+
+  const commitAndFinish = () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const clean = draftRef.current.trim() || 'Tópico';
+    if (clean !== nodeLabelRef.current) {
+      updateCanvasNode(id, { label: clean });
+    }
+    setEditingTopicNodeId(null);
+  };
 
   const isAspectLocked = shape === 'square' || shape === 'circle';
   const isCustomSvgShape =
@@ -130,13 +289,20 @@ export const CanvasTopicNode = memo(function CanvasTopicNode({
 
   const useSvgSurface = isCustomSvgShape || isSketch || hasDoubleBorder;
 
-  const textAlign = node.textAlign ?? 'center';
-  const alignClass =
-    textAlign === 'left'
+  const textAlign = resolvedTextStyle.textAlign;
+  const alignBoxClass =
+    textAlign === 'left' || textAlign === 'justify'
       ? 'text-left items-start'
       : textAlign === 'right'
       ? 'text-right items-end'
       : 'text-center items-center';
+
+  const alignRowJustify =
+    textAlign === 'left' || textAlign === 'justify'
+      ? 'justify-start'
+      : textAlign === 'right'
+      ? 'justify-end'
+      : 'justify-center';
 
   const cssShapeRadius: Partial<Record<TopicShape, string>> = {
     rect: 'rounded-none',
@@ -145,14 +311,6 @@ export const CanvasTopicNode = memo(function CanvasTopicNode({
     circle: 'rounded-full',
     ellipse: 'rounded-[50%]',
     capsule: 'rounded-full',
-  };
-
-  const commitLabel = () => {
-    const clean = draft.trim() || 'Tópico';
-    if (clean !== (node.label ?? '')) {
-      updateCanvasNode(id, { label: clean });
-    }
-    setEditingTopicNodeId(null);
   };
 
   const renderSvgShapeLayer = () => {
@@ -616,6 +774,268 @@ export const CanvasTopicNode = memo(function CanvasTopicNode({
       }}
       className={`group relative flex h-full w-full items-center justify-center ${SHADOW_CLASS[shadow]} transition-transform`}
     >
+      {/* BARRA FLUTUANTE DE PERSONALIZAÇÃO DO TEXTO DO TÓPICO DURANTE A EDIÇÃO */}
+      {isEditing && (
+        <div
+          onMouseDown={(e) => {
+            const tag = (e.target as HTMLElement).tagName;
+            if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+              e.preventDefault();
+            }
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className="nodrag nowheel absolute -top-12 left-1/2 z-[130] flex w-max max-w-[92vw] -translate-x-1/2 flex-wrap items-center justify-center gap-0.5 rounded-xl border border-indigo-500/45 bg-[#161920]/98 px-2 py-1 shadow-2xl backdrop-blur-xl"
+        >
+          <button
+            type="button"
+            onClick={() =>
+              applyTopicTextStyle({
+                fontWeight: resolvedTextStyle.fontWeight === 'bold' ? 'normal' : 'bold',
+              })
+            }
+            className={`rounded-lg p-1.5 transition ${
+              resolvedTextStyle.fontWeight === 'bold'
+                ? 'bg-indigo-600 text-white'
+                : 'text-zinc-300 hover:bg-zinc-800'
+            }`}
+            title="Negrito"
+          >
+            <Bold className="h-3.5 w-3.5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => applyTopicTextStyle({ italic: !resolvedTextStyle.italic })}
+            className={`rounded-lg p-1.5 transition ${
+              resolvedTextStyle.italic
+                ? 'bg-indigo-600 text-white'
+                : 'text-zinc-300 hover:bg-zinc-800'
+            }`}
+            title="Itálico"
+          >
+            <Italic className="h-3.5 w-3.5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => applyTopicTextStyle({ underline: !resolvedTextStyle.underline })}
+            className={`rounded-lg p-1.5 transition ${
+              resolvedTextStyle.underline
+                ? 'bg-indigo-600 text-white'
+                : 'text-zinc-300 hover:bg-zinc-800'
+            }`}
+            title="Sublinhado"
+          >
+            <UnderlineIcon className="h-3.5 w-3.5" />
+          </button>
+
+          {/* Pincel verde: Sublinhado colorido (Pincel, Ondulado, Duplo ou Tracejado) */}
+          <StudyUnderlinePicker
+            active={resolvedTextStyle.underline && resolvedTextStyle.underlineStyle !== 'solid'}
+            valueVariant={
+              resolvedTextStyle.underlineStyle !== 'solid'
+                ? resolvedTextStyle.underlineStyle
+                : 'brush'
+            }
+            valueColor={resolvedTextStyle.underlineColor || undefined}
+            onApplyStyle={(variant, color) =>
+              applyTopicTextStyle({
+                underline: true,
+                underlineStyle: variant,
+                underlineColor: color,
+              })
+            }
+            onClearStyle={() =>
+              applyTopicTextStyle({
+                underline: false,
+                underlineStyle: 'solid',
+                underlineColor: undefined,
+              })
+            }
+          />
+
+          <button
+            type="button"
+            onClick={() => applyTopicTextStyle({ strikethrough: !resolvedTextStyle.strikethrough })}
+            className={`rounded-lg p-1.5 transition ${
+              resolvedTextStyle.strikethrough
+                ? 'bg-indigo-600 text-white'
+                : 'text-zinc-300 hover:bg-zinc-800'
+            }`}
+            title="Tachado"
+          >
+            <Strikethrough className="h-3.5 w-3.5" />
+          </button>
+
+          {/* Troca rápida de Fonte + Painel completo Tipografia & Lettering */}
+          <StudyFontPicker
+            valueFontId={resolvedTextStyle.fontFamily}
+            onSelectFont={(fontFamily) => applyTopicTextStyle({ fontFamily })}
+          />
+
+          <TypographyPopover
+            compact
+            singleTitleMode
+            hideBannerBg
+            value={node.typography}
+            legacyFontSize={node.fontSize}
+            defaults={DEFAULT_TOPIC_TYPOGRAPHY}
+            onChange={() => {}}
+            onReset={resetTopicTextStyle}
+            titleStyle={resolvedTextStyle}
+            onTitleStyleChange={applyTopicTextStyle}
+            onTitleStyleReset={resetTopicTextStyle}
+          />
+
+          <div className="mx-0.5 h-4 w-px bg-zinc-800" />
+
+          {/* Marca-texto */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setOpenPicker(openPicker === 'highlight' ? null : 'highlight')}
+              className={`rounded-lg p-1.5 transition ${
+                resolvedTextStyle.highlightColor || openPicker === 'highlight'
+                  ? 'bg-amber-500/20 text-amber-300'
+                  : 'text-amber-400 hover:bg-zinc-800'
+              }`}
+              title="Marca-texto no tópico"
+            >
+              <Highlighter className="h-3.5 w-3.5" />
+            </button>
+            {openPicker === 'highlight' && (
+              <div className="absolute left-0 top-full z-[150] mt-2 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
+                {TOPIC_HIGHLIGHT_COLORS.map((c) => (
+                  <button
+                    key={`thl-${c.label}`}
+                    type="button"
+                    title={c.label}
+                    onClick={() => {
+                      applyTopicTextStyle({ highlightColor: c.value || undefined });
+                      setOpenPicker(null);
+                    }}
+                    className={`flex h-5 w-5 items-center justify-center rounded-md border text-[9px] font-bold text-zinc-400 transition hover:scale-110 ${
+                      resolvedTextStyle.highlightColor === c.value
+                        ? 'scale-110 border-white'
+                        : 'border-zinc-700'
+                    }`}
+                    style={c.value ? { backgroundColor: c.value } : undefined}
+                  >
+                    {!c.value && '✕'}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Cor do texto */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setOpenPicker(openPicker === 'color' ? null : 'color')}
+              className={`rounded-lg p-1.5 transition ${
+                openPicker === 'color'
+                  ? 'bg-indigo-600/30 text-indigo-200'
+                  : 'text-sky-300 hover:bg-zinc-800'
+              }`}
+              title="Cor do texto"
+            >
+              <Palette className="h-3.5 w-3.5" />
+            </button>
+            {openPicker === 'color' && (
+              <div className="absolute left-0 top-full z-[150] mt-2 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
+                {QUICK_TOPIC_TEXT_COLORS.map((hex) => (
+                  <button
+                    key={`ttc-${hex || 'auto'}`}
+                    type="button"
+                    onClick={() => {
+                      applyTopicTextStyle({ color: hex || undefined });
+                      setOpenPicker(null);
+                    }}
+                    className={`flex h-4 w-4 items-center justify-center rounded-full border text-[8px] font-bold text-zinc-400 transition hover:scale-125 ${
+                      resolvedTextStyle.color === hex ? 'scale-110 border-white' : 'border-zinc-700'
+                    }`}
+                    style={hex ? { backgroundColor: hex } : undefined}
+                    title={hex ? `Cor ${hex}` : 'Cor automática'}
+                  >
+                    {!hex && 'A'}
+                  </button>
+                ))}
+                <input
+                  type="color"
+                  value={effectiveTextColor}
+                  onChange={(e) => applyTopicTextStyle({ color: e.target.value })}
+                  className="h-4 w-4 cursor-pointer rounded border-0 bg-transparent p-0"
+                  title="Cor personalizada"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Alternar Caixa (Normal -> MAIÚSCULAS -> Capitalizado) */}
+          <button
+            type="button"
+            onClick={() => {
+              const order: Array<'none' | 'uppercase' | 'capitalize'> = [
+                'none',
+                'uppercase',
+                'capitalize',
+              ];
+              const next = order[(order.indexOf(resolvedTextStyle.textTransform) + 1) % order.length];
+              applyTopicTextStyle({ textTransform: next });
+            }}
+            className={`rounded-lg px-1.5 py-1 text-[10.5px] font-bold transition ${
+              resolvedTextStyle.textTransform !== 'none'
+                ? 'bg-indigo-600/30 text-indigo-200'
+                : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'
+            }`}
+            title="Alternar caixa: Normal / MAIÚSCULAS / Iniciais Maiúsculas"
+          >
+            {resolvedTextStyle.textTransform === 'uppercase'
+              ? 'AA'
+              : resolvedTextStyle.textTransform === 'capitalize'
+              ? 'Ab'
+              : 'Aa'}
+          </button>
+
+          <div className="mx-0.5 h-4 w-px bg-zinc-800" />
+
+          {/* Alinhamento */}
+          {(
+            [
+              { id: 'left', icon: AlignLeft, label: 'Alinhar à esquerda' },
+              { id: 'center', icon: AlignCenter, label: 'Centralizar' },
+              { id: 'right', icon: AlignRight, label: 'Alinhar à direita' },
+            ] as const
+          ).map(({ id: alignId, icon: Icon, label }) => (
+            <button
+              key={`tfa-${alignId}`}
+              type="button"
+              onClick={() => applyTopicTextStyle({ textAlign: alignId })}
+              className={`rounded-lg p-1.5 transition ${
+                textAlign === alignId
+                  ? 'bg-indigo-600/30 text-indigo-200'
+                  : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'
+              }`}
+              title={label}
+            >
+              <Icon className="h-3.5 w-3.5" />
+            </button>
+          ))}
+
+          <div className="mx-0.5 h-4 w-px bg-zinc-800" />
+
+          <button
+            type="button"
+            onClick={commitAndFinish}
+            className="flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-emerald-500"
+            title="Concluir edição (Enter ou Esc)"
+          >
+            <Check className="h-3.5 w-3.5" /> OK
+          </button>
+        </div>
+      )}
+
       <NodeResizer
         isVisible={selected || isEditing}
         keepAspectRatio={isAspectLocked}
@@ -693,14 +1113,9 @@ export const CanvasTopicNode = memo(function CanvasTopicNode({
 
       <div
         style={{
-          color: textColor,
-          fontSize: `${typo.fontSize}px`,
           lineHeight: typo.lineHeight,
-          fontFamily: getFontFamilyCss(typo.fontFamily),
-          ['--kc-fx-color' as string]: typo.effectColor,
-          ['--kc-fx-start' as string]: textColor,
         }}
-        className={`relative z-10 flex w-full flex-col justify-center ${alignClass} ${contentBoxClass}`}
+        className={`relative z-10 flex w-full flex-col justify-center ${alignBoxClass} ${contentBoxClass}`}
       >
         {isEditing ? (
           <textarea
@@ -708,31 +1123,32 @@ export const CanvasTopicNode = memo(function CanvasTopicNode({
             rows={2}
             value={draft}
             onClick={(e) => e.stopPropagation()}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commitLabel}
+            onChange={(e) => handleDraftChange(e.target.value)}
             onKeyDown={(e) => {
               e.stopPropagation();
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                commitLabel();
+                commitAndFinish();
               }
               if (e.key === 'Escape') {
-                setEditingTopicNodeId(null);
+                commitAndFinish();
               }
             }}
             style={{
-              textAlign,
-              color: textColor,
-              fontSize: `${typo.fontSize}px`,
+              ...titleRender.textStyle,
               lineHeight: typo.lineHeight,
-              fontFamily: getFontFamilyCss(typo.fontFamily),
             }}
-            className="nodrag nowheel w-full resize-none bg-transparent font-semibold focus:outline-none"
+            className={`nodrag nowheel w-full resize-none bg-transparent focus:outline-none ${titleRender.textClassName}`}
           />
         ) : (
-          <div className="flex max-w-full items-center justify-center gap-1.5 font-semibold tracking-tight">
+          <div className={`flex w-full items-center gap-1.5 tracking-tight ${alignRowJustify}`}>
             {icon && <span className="shrink-0 text-[1.05em] leading-none">{icon}</span>}
-            <span className={`whitespace-pre-wrap break-words ${getTextEffectClass(typo.textEffect)}`}>
+            <span
+              style={titleRender.textStyle}
+              className={`min-w-0 whitespace-pre-wrap break-words ${
+                icon ? '' : 'w-full'
+              } ${titleRender.textClassName}`}
+            >
               {node.label || 'Duplo clique...'}
             </span>
           </div>

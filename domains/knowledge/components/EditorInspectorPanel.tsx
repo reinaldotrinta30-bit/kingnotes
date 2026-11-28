@@ -331,8 +331,8 @@ export function EditorInspectorPanel({
   ];
 
   return (
-    <aside className="flex h-full w-full flex-col border-t border-zinc-800/80 bg-[#101319]/95 lg:w-[350px] lg:shrink-0 lg:border-l lg:border-t-0 xl:w-[375px]">
-      <div className="grid grid-cols-4 gap-1 border-b border-zinc-800/80 p-2">
+    <aside className="flex h-full min-h-0 w-full flex-col overflow-hidden border-t border-zinc-800/80 bg-[#101319]/95 lg:w-[350px] lg:shrink-0 lg:border-l lg:border-t-0 xl:w-[375px]">
+      <div className="grid shrink-0 grid-cols-4 gap-1 border-b border-zinc-800/80 p-2">
         {tabItems.map(({ id, label, icon: Icon, badge }) => (
           <button
             key={id}
@@ -355,7 +355,7 @@ export function EditorInspectorPanel({
         ))}
       </div>
 
-      <div className="flex-1 space-y-5 overflow-y-auto p-4">
+      <div className="kc-no-scrollbar min-h-0 flex-1 space-y-5 overflow-y-auto p-4 pb-10">
         {tab === 'style' && (
           <>
             <section className="space-y-3 rounded-2xl border border-zinc-800/80 bg-[#151922]/70 p-3.5">

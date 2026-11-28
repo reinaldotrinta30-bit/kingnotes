@@ -1,11 +1,8 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import {
-  EFFECT_COLOR_SWATCHES,
-  STUDY_FONT_OPTIONS,
-  TEXT_EFFECT_OPTIONS,
-} from '@/domains/canvas/utils/studyFonts';
+import { STUDY_FONT_OPTIONS } from '@/domains/canvas/utils/studyFonts';
+import { CardTitleStyleControls } from '@/domains/canvas/components/CardTitleStyleControls';
 import {
   Palette,
   Type,
@@ -151,19 +148,10 @@ export function EditorInspectorPanel({
   const isTypoCustomized =
     typo.fontSize !== DEFAULT_CARD_TYPOGRAPHY.fontSize ||
     typo.lineHeight !== DEFAULT_CARD_TYPOGRAPHY.lineHeight ||
-    typo.paragraphSpacing !== DEFAULT_CARD_TYPOGRAPHY.paragraphSpacing;
+    typo.paragraphSpacing !== DEFAULT_CARD_TYPOGRAPHY.paragraphSpacing ||
+    typo.fontFamily !== DEFAULT_CARD_TYPOGRAPHY.fontFamily;
 
-    const titleStyle = resolveCardTitleStyle(meta);
   const isTitleCustomized = Boolean(meta.titleStyle);
-  const updateTitleStyle = (patch: Partial<CardTitleStyle>) => {
-    updateCardMeta(meta.id, {
-      titleStyle: {
-        ...titleStyle,
-        color: titleStyle.color || undefined,
-        ...patch,
-      },
-    });
-  };
 
   const callout = resolveCardCallout(meta);
   const calloutVisible = callout.visible !== false;
@@ -546,196 +534,12 @@ export function EditorInspectorPanel({
                 </button>
               </div>
 
-              {typoTarget === 'title' ? (
-                <div className="space-y-3.5">
-                  <div className="space-y-1.5">
-                    <span className="block text-[11px] text-zinc-400">Fonte do título</span>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {STUDY_FONT_OPTIONS.map((font) => (
-                        <button
-                          key={font.id}
-                          type="button"
-                          onClick={() => updateTitleStyle({ fontFamily: font.id })}
-                          style={{ fontFamily: font.cssFamily }}
-                          className={`rounded-lg border px-2 py-1.5 text-xs transition ${
-                            titleStyle.fontFamily === font.id
-                              ? 'border-indigo-500 bg-indigo-600/20 text-indigo-100'
-                              : 'border-zinc-800 bg-[#0F1115] text-zinc-300 hover:border-zinc-700'
-                          }`}
-                        >
-                          {font.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <span className="block text-[11px] text-zinc-400">Efeito lettering</span>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {TEXT_EFFECT_OPTIONS.map((fx) => (
-                        <button
-                          key={fx.id}
-                          type="button"
-                          onClick={() => updateTitleStyle({ textEffect: fx.id })}
-                          className={`rounded-lg border px-2 py-1 text-[11px] font-medium transition ${
-                            titleStyle.textEffect === fx.id
-                              ? 'border-amber-500/70 bg-amber-500/15 text-amber-200'
-                              : 'border-zinc-800 bg-[#0F1115] text-zinc-400 hover:text-zinc-200'
-                          }`}
-                        >
-                          {fx.label}
-                        </button>
-                      ))}
-                    </div>
-
-                    {titleStyle.textEffect !== 'none' && (
-                      <div className="flex items-center justify-between gap-1.5 rounded-xl border border-zinc-800 bg-[#0F1115] px-2.5 py-1.5">
-                        <span className="text-[10px] text-zinc-500">Cor efeito</span>
-                        <div className="flex items-center gap-1">
-                          {EFFECT_COLOR_SWATCHES.map((sw) => (
-                            <button
-                              key={sw.hex}
-                              type="button"
-                              title={sw.label}
-                              onClick={() => updateTitleStyle({ effectColor: sw.hex })}
-                              className={`h-4 w-4 rounded-full border transition hover:scale-125 ${
-                                titleStyle.effectColor === sw.hex
-                                  ? 'scale-110 border-white'
-                                  : 'border-zinc-700'
-                              }`}
-                              style={{ backgroundColor: sw.hex }}
-                            />
-                          ))}
-                          <input
-                            type="color"
-                            value={titleStyle.effectColor}
-                            onChange={(e) => updateTitleStyle({ effectColor: e.target.value })}
-                            className="h-4 w-4 cursor-pointer rounded border-0 bg-transparent p-0"
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Cor do texto do título */}
-                  <div className="flex items-center justify-between gap-1.5 rounded-xl border border-zinc-800 bg-[#0F1115] px-2.5 py-1.5">
-                    <span className="text-[10.5px] text-zinc-400">Cor do título</span>
-                    <div className="flex items-center gap-1">
-                      {['', '#ffffff', '#18181b', '#818cf8', '#38bdf8', '#34d399', '#fbbf24', '#fb7185'].map(
-                        (hex) => (
-                          <button
-                            key={`itc-${hex || 'auto'}`}
-                            type="button"
-                            onClick={() => updateTitleStyle({ color: hex || undefined })}
-                            className={`flex h-4 w-4 items-center justify-center rounded-full border text-[8px] font-bold text-zinc-400 transition hover:scale-125 ${
-                              titleStyle.color === hex ? 'scale-110 border-white' : 'border-zinc-700'
-                            }`}
-                            style={hex ? { backgroundColor: hex } : undefined}
-                            title={hex ? `Cor ${hex}` : 'Cor padrão'}
-                          >
-                            {!hex && 'A'}
-                          </button>
-                        )
-                      )}
-                      <input
-                        type="color"
-                        value={titleStyle.color || '#ffffff'}
-                        onChange={(e) => updateTitleStyle({ color: e.target.value })}
-                        className="h-4 w-4 cursor-pointer rounded border-0 bg-transparent p-0"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Tamanho do Título */}
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-zinc-400">Tamanho do título</span>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            updateTitleStyle({ fontSize: Math.max(12, titleStyle.fontSize - 1) })
-                          }
-                          className="rounded bg-zinc-800 p-0.5 text-zinc-300 hover:bg-zinc-700"
-                        >
-                          <Minus className="h-3 w-3" />
-                        </button>
-                        <span className="w-10 text-center font-mono text-xs text-zinc-100">
-                          {titleStyle.fontSize}px
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            updateTitleStyle({ fontSize: Math.min(44, titleStyle.fontSize + 1) })
-                          }
-                          className="rounded bg-zinc-800 p-0.5 text-zinc-300 hover:bg-zinc-700"
-                        >
-                          <Plus className="h-3 w-3" />
-                        </button>
-                      </div>
-                    </div>
-                    <input
-                      type="range"
-                      min={12}
-                      max={44}
-                      step={1}
-                      value={titleStyle.fontSize}
-                      onChange={(e) => updateTitleStyle({ fontSize: Number(e.target.value) })}
-                      className="w-full accent-indigo-500"
-                    />
-                  </div>
-
-                  {/* Alinhamento + Itálico / Sublinhado */}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex flex-1 gap-1 rounded-lg border border-zinc-800 bg-[#0F1115] p-0.5">
-                      {(
-                        [
-                          { id: 'left', icon: AlignLeft },
-                          { id: 'center', icon: AlignCenter },
-                          { id: 'right', icon: AlignRight },
-                        ] as const
-                      ).map(({ id, icon: Icon }) => (
-                        <button
-                          key={`ita-${id}`}
-                          type="button"
-                          onClick={() => updateTitleStyle({ textAlign: id })}
-                          className={`flex flex-1 items-center justify-center rounded-md py-1 transition ${
-                            titleStyle.textAlign === id
-                              ? 'bg-indigo-600/30 text-indigo-200'
-                              : 'text-zinc-400 hover:text-zinc-100'
-                          }`}
-                        >
-                          <Icon className="h-3.5 w-3.5" />
-                        </button>
-                      ))}
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => updateTitleStyle({ italic: !titleStyle.italic })}
-                      className={`rounded-lg border p-1.5 transition ${
-                        titleStyle.italic
-                          ? 'border-indigo-500 bg-indigo-600/25 text-indigo-200'
-                          : 'border-zinc-800 bg-[#0F1115] text-zinc-400 hover:text-white'
-                      }`}
-                      title="Itálico"
-                    >
-                      <Italic className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => updateTitleStyle({ underline: !titleStyle.underline })}
-                      className={`rounded-lg border p-1.5 transition ${
-                        titleStyle.underline
-                          ? 'border-indigo-500 bg-indigo-600/25 text-indigo-200'
-                          : 'border-zinc-800 bg-[#0F1115] text-zinc-400 hover:text-white'
-                      }`}
-                      title="Sublinhado"
-                    >
-                      <UnderlineIcon className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
+{typoTarget === 'title' ? (
+                <CardTitleStyleControls
+                  value={meta.titleStyle}
+                  fallbackTypography={meta.typography}
+                  onChange={(next) => updateCardMeta(meta.id, { titleStyle: next })}
+                />
               ) : (
                 <div className="space-y-3.5">
                   <div className="space-y-1.5">

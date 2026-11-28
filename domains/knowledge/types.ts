@@ -48,12 +48,18 @@ export interface CardTitleStyle {
   fontFamily?: StudyFontId;
   fontSize?: number;
   color?: string;
-  textAlign?: 'left' | 'center' | 'right';
+  bgColor?: string;
+  textAlign?: 'left' | 'center' | 'right' | 'justify';
   textEffect?: TextEffectId;
   effectColor?: string;
   fontWeight?: 'normal' | 'semibold' | 'bold';
   italic?: boolean;
   underline?: boolean;
+  strikethrough?: boolean;
+  textTransform?: 'none' | 'uppercase' | 'capitalize';
+  letterSpacing?: number; // em (ex: -0.02 a 0.20)
+  underlineColor?: string;
+  underlineStyle?: 'solid' | 'brush' | 'wavy' | 'double' | 'dashed';
 }
 
 /** Observação Rápida / Pegadinha da Banca personalizável */
@@ -168,6 +174,11 @@ export interface HierarchyNode extends SyncableEntity {
   title: string;
   order: number;
   color?: string;
+  icon?: string;
+  coverBlobId?: string | null;
+  isArchived?: boolean;
+  isPinned?: boolean;
+  isFavorite?: boolean;
 }
 
 export interface EmbeddedFlashcard {

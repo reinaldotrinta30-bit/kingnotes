@@ -183,6 +183,15 @@ interface KnowledgeState {
   updateCanvasEdge: (edgeId: string, patch: Partial<CanvasConnection>) => Promise<void>;
   deleteCanvasEdge: (edgeId: string) => Promise<void>;
   renameHierarchyItem: (id: string, title: string) => Promise<void>;
+  updateHierarchyItem: (
+    id: string,
+    patch: Partial<
+      Pick<
+        HierarchyNode,
+        'title' | 'color' | 'icon' | 'coverBlobId' | 'isArchived' | 'isPinned' | 'isFavorite' | 'order'
+      >
+    >
+  ) => Promise<void>;
   restoreCardBundle: (
     full: FullKnowledgeCard,
     nodes: CanvasNodePosition[],
@@ -220,7 +229,7 @@ interface KnowledgeState {
       HierarchyNode,
       'id' | 'createdAt' | 'updatedAt' | 'deletedAt' | 'syncStatus' | 'version'
     >
-  ) => Promise<void>;
+  ) => Promise<HierarchyNode>;
 }
 
 export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
@@ -1309,16 +1318,29 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
   renameHierarchyItem: async (id, title) => {
     const clean = title.trim();
     if (!clean) return;
+    await get().updateHierarchyItem(id, { title: clean });
+  },
+
+  updateHierarchyItem: async (id, patch) => {
     const repo = getKnowledgeRepository();
     const target = get().hierarchy.find((h) => h.id === id);
     if (!target) return;
+
+    const cleanPatch = { ...patch };
+    if (cleanPatch.title !== undefined) {
+      const trimmed = cleanPatch.title.trim();
+      if (!trimmed) delete cleanPatch.title;
+      else cleanPatch.title = trimmed;
+    }
+
     const updated: HierarchyNode = {
       ...target,
-      title: clean,
+      ...cleanPatch,
       updatedAt: Date.now(),
       version: target.version + 1,
       syncStatus: 'pending_push',
     };
+
     set((s) => ({
       hierarchy: s.hierarchy.map((h) => (h.id === id ? updated : h)),
     }));
@@ -2338,5 +2360,6 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     };
     await repo.saveHierarchyNode(node);
     set((s) => ({ hierarchy: [...s.hierarchy, node] }));
+    return node;
   },
 }));

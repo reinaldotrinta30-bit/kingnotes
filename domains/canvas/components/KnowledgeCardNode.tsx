@@ -18,7 +18,7 @@ import { InlineCardEditor } from './InlineCardEditor';
 import { CardRichPreview } from './CardRichPreview';
 import { CalloutBadge } from './CalloutBadge';
 import { cn } from '@/lib/utils';
-import { getFontFamilyCss, getTextEffectClass } from '../utils/studyFonts';
+import { buildCardTitleRenderProps } from '../utils/cardTitleStyle';
 
 const COLOR_ACCENT: Record<KnowledgeCardMeta['color'], string> = {
   default: 'border-zinc-800/90 bg-[#161920]/95 hover:border-zinc-600/90',
@@ -228,6 +228,9 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
 
   const callout = resolveCardCallout(card);
   const titleStyle = resolveCardTitleStyle(card);
+  const titleProps = buildCardTitleRenderProps(titleStyle);
+  const hasStatusIcons = card.importance === 'critical' || card.isPinned || card.isFavorite;
+  const isFullWidthTitle = titleStyle.textAlign !== 'left' || titleProps.hasBannerBg;
   const calloutVisible = Boolean((callout.text ?? '').trim()) && callout.visible !== false;
   const calloutPos = callout.position ?? 'bottom';
   const hasFooterTags = card.tags.length > 0 || (canvasRecallMode && isRevealed);
@@ -340,44 +343,77 @@ export const KnowledgeCardNode = memo(function KnowledgeCardNode({
         /* MODO 3: VISUALIZAÇÃO LIMPA E COMPACTA NO CANVAS */
         <>
           <div className={cn('flex min-h-0 flex-1 flex-col', !isAutoSize && 'overflow-hidden')}>
-            {/* Cabeçalho do Card */}
-            <div className="mb-1.5 flex shrink-0 items-start justify-between gap-2">
-              <h3
-                style={{
-                  fontFamily: getFontFamilyCss(titleStyle.fontFamily),
-                  fontSize: `${titleStyle.fontSize}px`,
-                  color: titleStyle.color || undefined,
-                  textAlign: titleStyle.textAlign,
-                  fontStyle: titleStyle.italic ? 'italic' : 'normal',
-                  textDecoration: titleStyle.underline ? 'underline' : 'none',
-                  ['--kc-fx-color' as string]: titleStyle.effectColor,
-                  ['--kc-fx-start' as string]: titleStyle.color || '#f4f4f5',
-                }}
-                className={cn(
-                  'min-w-0 flex-1 line-clamp-2 font-bold leading-snug tracking-tight text-zinc-100',
-                  getTextEffectClass(titleStyle.textEffect)
+            {/* Cabeçalho do Card (largura 100% real quando centralizado, à direita, justificado ou com faixa) */}
+            {isFullWidthTitle ? (
+              <div className="mb-1.5 shrink-0">
+                {hasStatusIcons && (
+                  <div
+                    className={cn(
+                      'mb-1 flex items-center gap-1 text-zinc-400',
+                      titleStyle.textAlign === 'right' ? 'justify-start' : 'justify-end'
+                    )}
+                  >
+                    {card.importance === 'critical' && (
+                      <span title="Alta incidência em prova">
+                        <Flame className="h-3.5 w-3.5 text-rose-400" />
+                      </span>
+                    )}
+                    {card.isPinned && (
+                      <span title="Card fixado">
+                        <Pin className="h-3.5 w-3.5 text-indigo-400" />
+                      </span>
+                    )}
+                    {card.isFavorite && (
+                      <span title="Favorito">
+                        <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                      </span>
+                    )}
+                  </div>
                 )}
-              >
-                {card.title}
-              </h3>
-              <div className="flex shrink-0 items-center gap-1 text-zinc-400">
-                {card.importance === 'critical' && (
-                  <span title="Alta incidência em prova">
-                    <Flame className="h-3.5 w-3.5 text-rose-400" />
-                  </span>
-                )}
-                {card.isPinned && (
-                  <span title="Card fixado">
-                    <Pin className="h-3.5 w-3.5 text-indigo-400" />
-                  </span>
-                )}
-                {card.isFavorite && (
-                  <span title="Favorito">
-                    <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-                  </span>
+                <div style={titleProps.wrapperStyle} className={cn('w-full', titleProps.wrapperClassName)}>
+                  <h3
+                    style={titleProps.textStyle}
+                    className={cn(
+                      'w-full line-clamp-3 leading-snug tracking-tight text-zinc-100',
+                      titleProps.textClassName
+                    )}
+                  >
+                    {card.title}
+                  </h3>
+                </div>
+              </div>
+            ) : (
+              <div className="mb-1.5 flex shrink-0 items-start justify-between gap-2">
+                <h3
+                  style={titleProps.textStyle}
+                  className={cn(
+                    'min-w-0 flex-1 line-clamp-3 leading-snug tracking-tight text-zinc-100',
+                    titleProps.textClassName
+                  )}
+                >
+                  {card.title}
+                </h3>
+                {hasStatusIcons && (
+                  <div className="flex shrink-0 items-center gap-1 text-zinc-400">
+                    {card.importance === 'critical' && (
+                      <span title="Alta incidência em prova">
+                        <Flame className="h-3.5 w-3.5 text-rose-400" />
+                      </span>
+                    )}
+                    {card.isPinned && (
+                      <span title="Card fixado">
+                        <Pin className="h-3.5 w-3.5 text-indigo-400" />
+                      </span>
+                    )}
+                    {card.isFavorite && (
+                      <span title="Favorito">
+                        <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
-            </div>
+            )}
 
             {/* Observação no Topo ou como Etiqueta */}
             {density !== 'compact' && calloutVisible && (calloutPos === 'top' || calloutPos === 'badge') && (

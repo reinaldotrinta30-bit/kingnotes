@@ -163,9 +163,9 @@ export function AppShell() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#0F1115] text-zinc-100">
-      {/* Sidebar Hierárquica estilo Arc */}
+      {/* Sidebar Hierárquica estilo WhatsApp Web */}
       {showSidebar && (
-        <aside className="flex w-64 shrink-0 flex-col border-r border-zinc-800/80 bg-[#12151B]">
+        <aside className="flex w-[296px] shrink-0 flex-col border-r border-zinc-800/80 bg-[#12151B]">
           <div className="flex items-center justify-between border-b border-zinc-800/80 px-4 py-3.5">
             <span className="text-sm font-semibold tracking-tight text-zinc-100">
               Knowledge Canvas
@@ -175,7 +175,7 @@ export function AppShell() {
             </span>
           </div>
 
-          <div className="p-3">
+          <div className="border-b border-zinc-800/60 px-3 py-2.5">
             <div className="flex items-center gap-1.5">
               <select
                 value={activeWorkspaceId ?? ''}
@@ -199,7 +199,7 @@ export function AppShell() {
                   }
                   runSwitch();
                 }}
-                className="w-full rounded-xl border border-zinc-800 bg-[#181C24] px-3 py-2 text-xs font-medium text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                className="min-w-0 flex-1 rounded-xl border border-zinc-800 bg-[#181C24] px-2.5 py-2 text-xs font-medium text-zinc-200 focus:border-indigo-500 focus:outline-none"
               >
                 {workspaces.map((ws) => (
                   <option key={ws.id} value={ws.id}>
@@ -209,10 +209,17 @@ export function AppShell() {
               </select>
               <button
                 onClick={() => setCreatingWorkspace((v) => !v)}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-[#181C24] text-zinc-300 transition hover:border-indigo-500 hover:text-indigo-300"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-[#181C24] text-zinc-300 transition hover:border-indigo-500 hover:text-indigo-300"
                 title="Nova área de trabalho"
               >
                 <Plus className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setSearchOpen(true)}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-[#181C24] text-zinc-400 transition hover:border-indigo-500 hover:text-indigo-300"
+                title="Busca Global e Comandos (Ctrl+K)"
+              >
+                <Search className="h-3.5 w-3.5" />
               </button>
             </div>
 
@@ -237,16 +244,6 @@ export function AppShell() {
                 </button>
               </div>
             )}
-
-            <button
-              onClick={() => setSearchOpen(true)}
-              className="mt-2.5 flex w-full items-center justify-between rounded-xl border border-zinc-800/90 bg-[#181C24]/70 px-3 py-2 text-xs text-zinc-400 transition hover:border-zinc-700 hover:text-zinc-200"
-            >
-              <span className="flex items-center gap-2">
-                <Search className="h-3.5 w-3.5" /> Busca e Comandos
-              </span>
-              <kbd className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">⌘K</kbd>
-            </button>
           </div>
 
           <HierarchyTree />

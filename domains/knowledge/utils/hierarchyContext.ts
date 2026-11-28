@@ -1,4 +1,4 @@
-import { HierarchyNode, HierarchyScope } from '../types';
+import { HierarchyLevel, HierarchyNode, HierarchyScope } from '../types';
 
 export interface ResolvedHierarchyChain {
   disciplineId: string;
@@ -25,11 +25,11 @@ export function resolveHierarchyChain(
   if (selectedId) {
     let cursor = byId.get(selectedId) ?? null;
     let guard = 0;
-    while (cursor && guard < 10) {
-      if (cursor.level === 'discipline') disciplineId = cursor.id;
-      if (cursor.level === 'subject') subjectId = cursor.id;
-      if (cursor.level === 'subsubject') subsubjectId = cursor.id;
-      if (cursor.level === 'topic') topicId = cursor.id;
+    while (cursor && guard < 32) {
+      if (cursor.level === 'discipline' && !disciplineId) disciplineId = cursor.id;
+      if (cursor.level === 'subject' && !subjectId) subjectId = cursor.id;
+      if (cursor.level === 'subsubject' && !subsubjectId) subsubjectId = cursor.id;
+      if (cursor.level === 'topic' && !topicId) topicId = cursor.id;
       cursor = cursor.parentId ? byId.get(cursor.parentId) ?? null : null;
       guard += 1;
     }
@@ -88,7 +88,7 @@ export function getDescendantHierarchyIds(
   let added = true;
   let guard = 0;
 
-  while (added && guard < 16) {
+  while (added && guard < 32) {
     added = false;
     for (const node of hierarchy) {
       if (node.parentId && result.has(node.parentId) && !result.has(node.id)) {
@@ -132,11 +132,73 @@ export function getHierarchyBreadcrumb(
   let cursor = byId.get(selectedId) ?? null;
   let guard = 0;
 
-  while (cursor && guard < 10) {
+  while (cursor && guard < 32) {
     chain.unshift(cursor);
     cursor = cursor.parentId ? byId.get(cursor.parentId) ?? null : null;
     guard += 1;
   }
 
   return chain;
+}
+
+/**
+ * Retorna o próximo nível lógico ao criar um filho (subtópicos podem se aninhar livremente).
+ */
+export function getNextHierarchyLevel(level: HierarchyLevel): HierarchyLevel {
+  if (level === 'discipline') return 'subject';
+  if (level === 'subject') return 'subsubject';
+  return 'topic';
+}
+
+/**
+ * Rótulo amigável conforme o nível e a profundidade real na árvore.
+ */
+export function getHierarchyLevelLabel(level: HierarchyLevel, depth?: number): string {
+  if (depth !== undefined) {
+    if (depth === 0) return 'Disciplina';
+    if (depth === 1) return 'Assunto';
+    if (depth === 2) return 'Subassunto';
+    if (depth === 3) return 'Tópico';
+    return 'Subtópico';
+  }
+  switch (level) {
+    case 'discipline':
+      return 'Disciplina';
+    case 'subject':
+      return 'Assunto';
+    case 'subsubject':
+      return 'Subassunto';
+    default:
+      return 'Tópico';
+  }
+}
+
+/**
+ * Calcula a profundidade do nó (0 = Disciplina, 1 = Assunto, 2 = Subassunto, 3 = Tópico, 4+ = Subtópico).
+ */
+export function getHierarchyDepth(hierarchy: HierarchyNode[], nodeId: string): number {
+  const chain = getHierarchyBreadcrumb(hierarchy, nodeId);
+  return Math.max(0, chain.length - 1);
+}
+
+/**
+ * Sobe a árvore até a Disciplina raiz (usado para herança de paleta visual nos subníveis).
+ */
+export function getRootDiscipline(
+  hierarchy: HierarchyNode[],
+  nodeId: string
+): HierarchyNode | null {
+  const chain = getHierarchyBreadcrumb(hierarchy, nodeId);
+  return chain[0] ?? null;
+}
+
+/**
+ * Verifica se o nó ou algum ancestral seu está arquivado.
+ */
+export function isHierarchyNodeArchived(
+  hierarchy: HierarchyNode[],
+  nodeId: string
+): boolean {
+  const chain = getHierarchyBreadcrumb(hierarchy, nodeId);
+  return chain.some((n) => Boolean(n.isArchived));
 }

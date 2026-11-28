@@ -20,6 +20,7 @@ import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
 import Image from '@tiptap/extension-image';
 import { common, createLowlight } from 'lowlight';
 import { StudyUnderlineMark } from '../extensions/StudyUnderlineMark';
+import { buildCardTitleRenderProps } from '@/domains/canvas/utils/cardTitleStyle';
 import {
   Bold,
   Italic,
@@ -617,6 +618,9 @@ export function KnowledgeCardEditorPane({
   const typoStyle = buildTypographyCssVars(fullCard.meta.typography, DEFAULT_CARD_TYPOGRAPHY);
   const callout = resolveCardCallout(fullCard.meta);
   const titleStyle = resolveCardTitleStyle(fullCard.meta);
+  const titleProps = buildCardTitleRenderProps(titleStyle, {
+    fontSizeOverride: Math.max(22, Math.round(titleStyle.fontSize * 1.45)),
+  });
 
   const handleCreateQuickFlashcard = () => {
     if (!bubbleMenu || !quickFlashcardFront.trim()) return;
@@ -926,36 +930,17 @@ export function KnowledgeCardEditorPane({
             <Link2 className="h-3.5 w-3.5" />
           </button>
           {openMenu === 'wikilink' && (
-            <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
+            <div style={titleProps.wrapperStyle} className={`mb-3 w-full ${titleProps.wrapperClassName}`}>
               <input
-                autoFocus
-                value={wikiQuery}
-                onChange={(e) => setWikiQuery(e.target.value)}
-                placeholder="Buscar card para conectar..."
-                className="mb-2 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100 focus:border-indigo-500 focus:outline-none"
+                value={titleDraft}
+                onChange={(e) => {
+                  setTitleDraft(e.target.value);
+                  scheduleAutoSave();
+                }}
+                style={titleProps.textStyle}
+                className={`w-full bg-transparent leading-tight tracking-tight text-zinc-100 placeholder:text-zinc-600 focus:outline-none ${titleProps.textClassName}`}
+                placeholder="Título do Knowledge Card"
               />
-              <div className="max-h-48 space-y-0.5 overflow-y-auto">
-                {otherCards.map((target) => (
-                  <button
-                    key={target.id}
-                    type="button"
-                    onClick={() => {
-                      editor
-                        .chain()
-                        .focus()
-                        .insertContent({
-                          type: 'wikiLink',
-                          attrs: { cardId: target.id, label: target.title },
-                        })
-                        .run();
-                      setOpenMenu(null);
-                    }}
-                    className="block w-full truncate rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-200 hover:bg-indigo-600/20 hover:text-indigo-200"
-                  >
-                    {target.title}
-                  </button>
-                ))}
-              </div>
             </div>
           )}
         </div>

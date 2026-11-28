@@ -111,29 +111,52 @@ export function resolveEdgeStrokeWidth(edge: Pick<CanvasConnection, 'strokeWidth
   return clampNumber(edge.strokeWidth ?? 1.75, 1, 8, 1.75);
 }
 
-export const DEFAULT_CARD_TITLE_STYLE: Required<Omit<CardTitleStyle, 'color'>> & {
+export interface ResolvedCardTitleStyle {
+  fontFamily: NonNullable<CardTitleStyle['fontFamily']>;
+  fontSize: number;
   color: string;
-} = {
+  bgColor: string;
+  textAlign: NonNullable<CardTitleStyle['textAlign']>;
+  textEffect: NonNullable<CardTitleStyle['textEffect']>;
+  effectColor: string;
+  fontWeight: NonNullable<CardTitleStyle['fontWeight']>;
+  italic: boolean;
+  underline: boolean;
+  strikethrough: boolean;
+  textTransform: NonNullable<CardTitleStyle['textTransform']>;
+  letterSpacing: number;
+  underlineColor: string;
+  underlineStyle: NonNullable<CardTitleStyle['underlineStyle']>;
+}
+
+export const DEFAULT_CARD_TITLE_STYLE: ResolvedCardTitleStyle = {
   fontFamily: 'default',
   fontSize: 15,
   color: '',
+  bgColor: '',
   textAlign: 'left',
   textEffect: 'none',
   effectColor: '#0f172a',
   fontWeight: 'bold',
   italic: false,
   underline: false,
+  strikethrough: false,
+  textTransform: 'none',
+  letterSpacing: 0,
+  underlineColor: '',
+  underlineStyle: 'solid',
 };
 
 export function resolveCardTitleStyle(meta?: {
   titleStyle?: CardTitleStyle;
   typography?: TextTypographyConfig;
-}): Required<Omit<CardTitleStyle, 'color'>> & { color: string } {
+}): ResolvedCardTitleStyle {
   const ts = meta?.titleStyle;
   return {
     fontFamily: ts?.fontFamily ?? meta?.typography?.fontFamily ?? DEFAULT_CARD_TITLE_STYLE.fontFamily,
     fontSize: Math.max(12, Math.min(44, Math.round(ts?.fontSize ?? DEFAULT_CARD_TITLE_STYLE.fontSize))),
     color: ts?.color ?? '',
+    bgColor: ts?.bgColor ?? '',
     textAlign: ts?.textAlign ?? DEFAULT_CARD_TITLE_STYLE.textAlign,
     textEffect: ts?.textEffect ?? meta?.typography?.textEffect ?? DEFAULT_CARD_TITLE_STYLE.textEffect,
     effectColor:
@@ -141,5 +164,10 @@ export function resolveCardTitleStyle(meta?: {
     fontWeight: ts?.fontWeight ?? DEFAULT_CARD_TITLE_STYLE.fontWeight,
     italic: ts?.italic ?? DEFAULT_CARD_TITLE_STYLE.italic,
     underline: ts?.underline ?? DEFAULT_CARD_TITLE_STYLE.underline,
+    strikethrough: ts?.strikethrough ?? DEFAULT_CARD_TITLE_STYLE.strikethrough,
+    textTransform: ts?.textTransform ?? DEFAULT_CARD_TITLE_STYLE.textTransform,
+    letterSpacing: Math.round(clampNumber(ts?.letterSpacing ?? 0, -0.04, 0.22, 0) * 100) / 100,
+    underlineColor: ts?.underlineColor ?? '',
+    underlineStyle: ts?.underlineStyle ?? DEFAULT_CARD_TITLE_STYLE.underlineStyle,
   };
 }

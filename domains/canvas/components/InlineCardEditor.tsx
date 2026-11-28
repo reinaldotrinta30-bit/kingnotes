@@ -22,6 +22,7 @@ import { common, createLowlight } from 'lowlight';
 import { StudyUnderlinePicker } from './StudyUnderlinePicker';
 import { StudyFontPicker } from '@/domains/canvas/components/StudyFontPicker';
 import { StudyFontMark } from '@/domains/knowledge/extensions/StudyFontMark';
+import { buildCardTitleRenderProps } from '../utils/cardTitleStyle';   
 
 
 import {
@@ -253,6 +254,7 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
   const typoStyle = buildTypographyCssVars(meta.typography, DEFAULT_CARD_TYPOGRAPHY);
   const calloutConfig = resolveCardCallout(meta);
   const titleStyle = resolveCardTitleStyle(meta);
+  const titleProps = buildCardTitleRenderProps(titleStyle);
 
   const handleAddTag = () => {
     const clean = newTag
@@ -440,24 +442,15 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
       )}
 
       {/* TÍTULO EDITÁVEL INLINE */}
-      <input
-        value={meta.title}
-        onChange={(e) => updateCardMeta(cardId, { title: e.target.value })}
-        placeholder="Título do Card..."
-        style={{
-          fontFamily: getFontFamilyCss(titleStyle.fontFamily),
-          fontSize: `${titleStyle.fontSize}px`,
-          color: titleStyle.color || undefined,
-          textAlign: titleStyle.textAlign,
-          fontStyle: titleStyle.italic ? 'italic' : 'normal',
-          textDecoration: titleStyle.underline ? 'underline' : 'none',
-          ['--kc-fx-color' as string]: titleStyle.effectColor,
-          ['--kc-fx-start' as string]: titleStyle.color || '#f4f4f5',
-        }}
-        className={`mb-1.5 w-full bg-transparent font-bold tracking-tight text-zinc-100 placeholder:text-zinc-500 focus:outline-none ${getTextEffectClass(
-          titleStyle.textEffect
-        )}`}
-      />
+      <div style={titleProps.wrapperStyle} className={`mb-1.5 w-full ${titleProps.wrapperClassName}`}>
+        <input
+          value={meta.title}
+          onChange={(e) => updateCardMeta(cardId, { title: e.target.value })}
+          placeholder="Título do Card..."
+          style={titleProps.textStyle}
+          className={`w-full bg-transparent leading-snug tracking-tight text-zinc-100 placeholder:text-zinc-500 focus:outline-none ${titleProps.textClassName}`}
+        />
+      </div>
 
       {/* CONTEÚDO RICO COM TIPOGRAFIA EM TEMPO REAL */}
       <div style={typoStyle} className="kc-no-scrollbar min-h-0 flex-1 cursor-text overflow-y-auto">

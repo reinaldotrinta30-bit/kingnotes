@@ -34,6 +34,8 @@ import { CalloutBadge } from '@/domains/canvas/components/CalloutBadge';
 import { resolveCardTitleStyle } from '@/domains/knowledge/utils/defaults';
 import { StudyFontMark } from '@/domains/knowledge/extensions/StudyFontMark';
 import { getFontFamilyCss, getTextEffectClass } from '@/domains/canvas/utils/studyFonts';
+import { buildCardTitleRenderProps } from '@/domains/canvas/utils/cardTitleStyle';
+
 
 const lowlight = createLowlight(common);
 
@@ -194,6 +196,9 @@ export function BookCardReader({
     showCallouts && Boolean((callout.text ?? '').trim()) && callout.visible !== false;
   const typoStyle = buildTypographyCssVars(card.typography, DEFAULT_CARD_TYPOGRAPHY);
   const titleStyle = resolveCardTitleStyle(card);
+  const titleProps = buildCardTitleRenderProps(titleStyle, {
+    fontSizeOverride: Math.max(17, Math.round(titleStyle.fontSize * 1.15)),
+  });
 
   return (
     <article
@@ -215,21 +220,23 @@ export function BookCardReader({
             effectiveTheme === 'paper' ? 'border-stone-200' : 'border-zinc-800/70'
           }`}
         >
-          <div className="flex items-center gap-2">
-            {card.emoji && <span className="text-lg">{card.emoji}</span>}
-            <h3
-  className={`text-lg font-semibold tracking-tight ${
-    effectiveTheme === 'paper' ? 'text-zinc-900' : 'text-zinc-100'
-  } ${getTextEffectClass(titleStyle.textEffect)}`}
-  style={{
-    fontFamily: getFontFamilyCss(titleStyle.fontFamily),
-    fontStyle: titleStyle.italic ? 'italic' : 'normal',
-    textDecoration: titleStyle.underline ? 'underline' : 'none',
-  }}
+          <div
+  className="flex items-center gap-2"
+  style={titleProps.wrapperStyle}
 >
-  {card.title}
-</h3>
-          </div>
+  {card.emoji && <span className="text-lg">{card.emoji}</span>}
+
+  <h3
+    className={`
+      text-lg font-semibold tracking-tight
+      ${titleStyle.textAlign !== 'left' ? 'w-full' : ''}
+      ${titleProps.textClassName}
+    `}
+    style={titleProps.textStyle}
+  >
+    {card.title}
+  </h3>
+</div>
 
           <div className="kc-no-print flex shrink-0 items-center gap-1.5">
             {card.importance === 'critical' && (

@@ -4167,7 +4167,7 @@ function CanvasInner() {
                 onClick={() => handleCreateQuickCard('blank')}
                 className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-500"
               >
-                <Plus className="h-3.5 w-3.5" /> Novo Card
+                <Plus className="h-3.5 w-3.5" /> Card
               </button>
               <button
                 onClick={() => handleCreateQuickCard('law', 'Artigo de Lei')}

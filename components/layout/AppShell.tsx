@@ -15,6 +15,7 @@ import {
   Maximize2,
   Minimize2,
   SlidersHorizontal,
+  Settings2,
   FileText,
 } from 'lucide-react';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
@@ -29,6 +30,7 @@ import { FocusTimerWidget } from '@/domains/review/components/FocusTimerWidget';
 import { PdfStudyPanel } from '@/domains/pdf/components/PdfStudyPanel';
 import { BackupModal } from './BackupModal';
 import { PreferencesModal } from './PreferencesModal';
+import { WorkspaceManagerModal } from './WorkspaceManagerModal';
 import { UiOverlays } from './UiOverlays';
 
 export function AppShell() {
@@ -70,6 +72,7 @@ export function AppShell() {
 
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [workspaceDraft, setWorkspaceDraft] = useState('');
+  const [isWorkspaceManagerOpen, setIsWorkspaceManagerOpen] = useState(false);
 
   // Controle suave da largura e responsividade do Leitor de PDF (Tela Dividida)
   const mainAreaRef = useRef<HTMLDivElement>(null);
@@ -208,9 +211,16 @@ export function AppShell() {
                 ))}
               </select>
               <button
+                onClick={() => setIsWorkspaceManagerOpen(true)}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-[#181C24] text-zinc-300 transition hover:border-indigo-500 hover:text-indigo-300"
+                title="Gerenciar Carreiras e Módulos (criar, editar, excluir)"
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+              </button>
+              <button
                 onClick={() => setCreatingWorkspace((v) => !v)}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-zinc-800 bg-[#181C24] text-zinc-300 transition hover:border-indigo-500 hover:text-indigo-300"
-                title="Nova área de trabalho"
+                title="Criar nova carreira / módulo rápido"
               >
                 <Plus className="h-4 w-4" />
               </button>
@@ -487,6 +497,10 @@ export function AppShell() {
 
       <KnowledgeEditorDrawer />
       <CommandSearch />
+      <WorkspaceManagerModal
+        isOpen={isWorkspaceManagerOpen}
+        onClose={() => setIsWorkspaceManagerOpen(false)}
+      />
       <BackupModal isOpen={isBackupOpen} onClose={() => setBackupOpen(false)} />
       <PreferencesModal />
       <UiOverlays />

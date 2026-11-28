@@ -99,6 +99,12 @@ import { CanvasTopicNode } from './CanvasTopicNode';
 import { HierarchyFolderNode } from './HierarchyFolderNode';
 import { HierarchySlideNode } from './HierarchySlideNode';
 import { computeCanvasExplorerLayout } from '../utils/canvasExplorerLayout';
+import {
+  buildInheritedCardStyle,
+  buildInheritedTextStyle,
+  buildInheritedTopicStyle,
+  extractInheritedStyle,
+} from '../utils/styleInheritance';
 import { TypographyPopover } from './TypographyPopover';
 import { StudyUnderlinePicker } from './StudyUnderlinePicker';
 import { CalloutCustomizerPopover } from './CalloutCustomizerPopover';
@@ -498,7 +504,12 @@ function CanvasInner() {
   }, [getViewport]);
 
   const fitCanvasWithMargins = useCallback(
-    (options?: { nodeIds?: string[]; duration?: number; maxZoom?: number }) => {
+    (options?: {
+      nodeIds?: string[];
+      duration?: number;
+      maxZoom?: number;
+      focusBoost?: boolean;
+    }) => {
       const container = containerRef.current;
       const allNodes = getNodes().filter((n) => !n.hidden);
       const targets = options?.nodeIds
@@ -546,10 +557,36 @@ function CanvasInner() {
       const contentW = Math.max(1, maxX - minX);
       const contentH = Math.max(1, maxY - minY);
 
-      const maxAllowedZoom = options?.maxZoom ?? 1.05;
+      const isExplorerTargets = targets.every(
+        (n) => n.type === 'hierarchyFolder' || n.type === 'hierarchySlide'
+      );
+      const effectiveCount =
+        targets.filter((n) => n.type !== 'panoramaSection').length || targets.length;
+
+      // Calibração dinâmica: poucos itens aproximam com destaque real; mapas grandes mantêm respiro
+      let dynamicMaxZoom = 1.12;
+      let fillFactor = 0.94;
+      if (isExplorerTargets) {
+        dynamicMaxZoom = 1.1;
+        fillFactor = 0.92;
+      } else if (effectiveCount === 1) {
+        dynamicMaxZoom = options?.focusBoost ? 1.95 : 1.8;
+        fillFactor = options?.focusBoost ? 0.78 : 0.72;
+      } else if (effectiveCount === 2) {
+        dynamicMaxZoom = options?.focusBoost ? 1.65 : 1.55;
+        fillFactor = 0.82;
+      } else if (effectiveCount <= 4) {
+        dynamicMaxZoom = options?.focusBoost ? 1.48 : 1.38;
+        fillFactor = 0.86;
+      } else if (effectiveCount <= 8) {
+        dynamicMaxZoom = 1.24;
+        fillFactor = 0.9;
+      }
+
+      const maxAllowedZoom = options?.maxZoom ?? dynamicMaxZoom;
       const zoom = Math.max(
         0.15,
-        Math.min(maxAllowedZoom, availW / contentW, availH / contentH)
+        Math.min(maxAllowedZoom, (availW * fillFactor) / contentW, (availH * fillFactor) / contentH)
       );
 
       const safeCenterX = marginLeft + availW / 2;
@@ -1162,7 +1199,7 @@ function CanvasInner() {
     const contextKey = `${activeWorkspaceId ?? ''}::${selectedHierarchyId ?? 'ALL'}::${explorerLayout.mode}`;
     if (prevContextKeyRef.current !== null && prevContextKeyRef.current !== contextKey) {
       const timer = setTimeout(() => {
-        fitCanvasWithMargins({ duration: 420, maxZoom: 1.05 });
+        fitCanvasWithMargins({ duration: 420 });
       }, 90);
       prevContextKeyRef.current = contextKey;
       return () => clearTimeout(timer);
@@ -1577,17 +1614,58 @@ function CanvasInner() {
       const key = e.key.toLowerCase();
 
       if (key === 'c') {
-        const selCardIds = getNodes()
-          .filter((n) => n.selected && n.type === 'knowledgeCard')
+        // Se o usuário selecionou texto para copiar, respeita a cópia nativa do navegador
+        if (window.getSelection()?.toString().trim()) return;
+
+        const selIds = getNodes()
+          .filter(
+            (n) =>
+              n.selected &&
+              n.type !== 'panoramaSection' &&
+              n.type !== 'hierarchyFolder' &&
+              n.type !== 'hierarchySlide'
+          )
           .map((n) => n.id);
-        if (selCardIds.length > 0) {
+
+        if (selIds.length > 0) {
           e.preventDefault();
-          clipboardIdsRef.current = selCardIds;
+          clipboardIdsRef.current = selIds;
+          addToast(
+            {
+              message:
+                selIds.length === 1
+                  ? '1 elemento copiado — Ctrl+V para colar'
+                  : `${selIds.length} elementos copiados — Ctrl+V para colar`,
+            },
+            1800
+          );
         }
-      } else if (key === 'v' && clipboardIdsRef.current.length > 0) {
+      } else if (key === 'v' && !isExplorerMode && clipboardIdsRef.current.length > 0) {
         e.preventDefault();
-        pushHistorySnapshot();
-        await duplicateCanvasNodes(clipboardIdsRef.current);
+        const rect = containerRef.current?.getBoundingClientRect();
+        const centerScreen = rect
+          ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+          : { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+        const targetCenter = screenToFlowPosition(centerScreen);
+
+        const createdIds = await duplicateCanvasNodes(clipboardIdsRef.current, { targetCenter });
+        if (createdIds.length > 0) {
+          // Atualiza o clipboard para os recém-colados (permite cascata suave em Ctrl+V repetido)
+          clipboardIdsRef.current = createdIds;
+          const createdSet = new Set(createdIds);
+          setTimeout(() => {
+            setNodes((nds) => nds.map((n) => ({ ...n, selected: createdSet.has(n.id) })));
+          }, 30);
+          addToast(
+            {
+              message:
+                createdIds.length === 1
+                  ? '1 elemento colado'
+                  : `${createdIds.length} elementos colados`,
+            },
+            1800
+          );
+        }
       } else if (key === 'z' && !e.shiftKey) {
         e.preventDefault();
         await handleUndo();
@@ -2027,14 +2105,20 @@ function CanvasInner() {
         return;
       }
 
+      const storeSnapshot = useKnowledgeStore.getState();
+      const srcNode = storeSnapshot.canvasNodes.find((n) => n.id === sourceId);
+      const inherited = extractInheritedStyle(srcNode, storeSnapshot.cardsById);
+
       beginHistoryBatch();
       try {
         if (type === 'card') {
           const drop = resolveConnectedDropLayout(sourceHandle, flowPos, 320, 96);
+          const cardStyle = buildInheritedCardStyle(inherited);
           const newCardId = await createCardOnCanvas({
             x: drop.x,
             y: drop.y,
             title: 'Novo Card',
+            ...cardStyle,
           });
           const createdNode = useKnowledgeStore
             .getState()
@@ -2048,15 +2132,14 @@ function CanvasInner() {
 
         if (type === 'topic') {
           const drop = resolveConnectedDropLayout(sourceHandle, flowPos, 210, 74);
-          const srcNode = useKnowledgeStore
-            .getState()
-            .canvasNodes.find((n) => n.id === sourceId);
+          const topicStyle = buildInheritedTopicStyle(inherited, globalColor);
           const topicId = await createCanvasTopic({
             x: drop.x,
             y: drop.y,
             label: 'Novo Tópico',
-            shape: 'rounded',
-            color: srcNode?.color ?? globalColor,
+            shape: topicStyle.shape,
+            color: topicStyle.color,
+            initialStyle: topicStyle.initialStyle,
           });
           if (topicId) {
             await connectEdgeFromSource(sourceId, sourceHandle, topicId, drop.targetHandle);
@@ -2067,10 +2150,12 @@ function CanvasInner() {
 
         if (type === 'text') {
           const drop = resolveConnectedDropLayout(sourceHandle, flowPos, 260, 72);
+          const textStyle = buildInheritedTextStyle(inherited);
           const textId = await createCanvasText({
             x: drop.x,
             y: drop.y,
             preset: 'plain',
+            initialStyle: textStyle,
           });
           if (textId) {
             await connectEdgeFromSource(sourceId, sourceHandle, textId, drop.targetHandle);
@@ -2317,7 +2402,7 @@ const handleCreateQuickText = async (
 
       <div className="flex items-center gap-0.5 rounded-xl border border-zinc-800/80 bg-[#0F1115] p-0.5">
         <button type="button" onClick={() => zoomOut()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Afastar"><ZoomOut className="h-3.5 w-3.5" /></button>
-        <button type="button" onClick={() => fitCanvasWithMargins({ duration: 450, maxZoom: 1.05 })} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Enquadrar Tudo com margens"><Maximize className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => fitCanvasWithMargins({ duration: 450 })} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Enquadrar Tudo com zoom inteligente"><Maximize className="h-3.5 w-3.5" /></button>
         <button type="button" onClick={() => zoomIn()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Aproximar"><ZoomIn className="h-3.5 w-3.5" /></button>
         <button
           type="button"
@@ -2544,15 +2629,24 @@ const handleCreateQuickText = async (
           insertImageFileToCanvas(file, { x: e.clientX, y: e.clientY });
         }
       }}
-      onPointerUp={() => {
-        if (interactionMode === 'focus') {
+      onPointerUp={(e) => {
+        if (interactionMode === 'focus' && !isExplorerMode) {
+          const targetEl = e.target as HTMLElement | null;
+          if (targetEl?.closest('.react-flow__panel, button, input, textarea, select')) return;
+
           setTimeout(() => {
-            const selected = getNodes().filter((n) => n.selected && n.type !== 'canvasGroup');
-            if (selected.length > 0) {
+            const allSelected = getNodes().filter((n) => n.selected);
+            const nonGroupSelected = allSelected.filter((n) => n.type !== 'canvasGroup');
+            const targets = nonGroupSelected.length > 0 ? nonGroupSelected : allSelected;
+            if (targets.length > 0) {
               saveViewport();
-              fitCanvasWithMargins({ nodeIds: selected.map((n) => n.id), duration: 500, maxZoom: 1.15 });
+              fitCanvasWithMargins({
+                nodeIds: targets.map((n) => n.id),
+                duration: 480,
+                focusBoost: true,
+              });
             }
-          }, 100);
+          }, 90);
         }
       }}
     >

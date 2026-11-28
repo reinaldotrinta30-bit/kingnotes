@@ -25,6 +25,14 @@ export class DexieKnowledgeRepository implements IKnowledgeRepository {
     await db.workspaces.put(workspace);
   }
 
+  async deleteWorkspace(id: string): Promise<void> {
+    await db.workspaces.update(id, {
+      deletedAt: Date.now(),
+      updatedAt: Date.now(),
+      syncStatus: 'pending_push',
+    });
+  }
+
   async listNotebooks(): Promise<StudyNotebook[]> {
     return db.notebooks.filter((n) => n.deletedAt === null).sortBy('createdAt');
   }

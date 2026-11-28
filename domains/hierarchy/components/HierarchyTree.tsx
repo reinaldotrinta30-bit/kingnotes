@@ -5,6 +5,7 @@ import {
   Archive,
   ArchiveRestore,
   ArrowLeft,
+  ArrowRightLeft,
   ChevronRight,
   FolderPlus,
   Image as ImageIcon,
@@ -33,6 +34,7 @@ import {
 } from '@/domains/knowledge/utils/hierarchyContext';
 import { HierarchyAvatar, getDeterministicHierarchyColor } from './HierarchyAvatar';
 import { HierarchyAppearanceModal } from './HierarchyAppearanceModal';
+import { HierarchyTransferModal } from './HierarchyTransferModal';
 
 type FilterTab = 'all' | 'due' | 'pinned' | 'favorite';
 
@@ -111,6 +113,7 @@ export function HierarchyTree() {
   const [renameDraft, setRenameDraft] = useState('');
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [appearanceNodeId, setAppearanceNodeId] = useState<string | null>(null);
+  const [transferSourceId, setTransferSourceId] = useState<string | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -325,7 +328,7 @@ export function HierarchyTree() {
 
   const openRowMenu = (nodeId: string, clientX: number, clientY: number) => {
     const menuW = 208;
-    const menuH = 264;
+    const menuH = 304;
     const x = Math.max(10, Math.min(window.innerWidth - menuW - 10, clientX));
     const y = Math.max(10, Math.min(window.innerHeight - menuH - 10, clientY));
     setContextMenu({ nodeId, x, y });
@@ -339,6 +342,7 @@ export function HierarchyTree() {
 
   const contextMenuNode = contextMenu ? byId.get(contextMenu.nodeId) ?? null : null;
   const appearanceNode = appearanceNodeId ? byId.get(appearanceNodeId) ?? null : null;
+  const transferSourceNode = transferSourceId ? byId.get(transferSourceId) ?? null : null;
 
   const renderConversationRow = (
     node: HierarchyNode,
@@ -831,6 +835,17 @@ export function HierarchyTree() {
             <Pencil className="h-3.5 w-3.5 text-zinc-400" /> Renomear
           </button>
 
+          <button
+            type="button"
+            onClick={() => {
+              setTransferSourceId(contextMenuNode.id);
+              setContextMenu(null);
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-zinc-200 hover:bg-indigo-600/20 hover:text-indigo-200"
+          >
+            <ArrowRightLeft className="h-3.5 w-3.5 text-sky-400" /> Transferir conteúdo...
+          </button>
+
           <div className="my-1 h-px bg-zinc-800/80" />
 
           <button
@@ -936,6 +951,13 @@ export function HierarchyTree() {
         depth={appearanceNode ? getHierarchyDepth(hierarchy, appearanceNode.id) : 0}
         inheritedColor={appearanceNode ? getInheritedColorFor(appearanceNode) : undefined}
         onClose={() => setAppearanceNodeId(null)}
+      />
+
+      {/* MODAL DE TRANSFERÊNCIA / TROCA DE CONTEÚDO ENTRE PASTAS E TÓPICOS */}
+      <HierarchyTransferModal
+        sourceNode={transferSourceNode}
+        onClose={() => setTransferSourceId(null)}
+        onTransferred={(destId) => handleSafeSelectHierarchy(destId)}
       />
     </div>
   );

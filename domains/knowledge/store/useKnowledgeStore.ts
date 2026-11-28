@@ -8,6 +8,7 @@ import {
   CanvasStroke,
   FullKnowledgeCard,
   HierarchyNode,
+  HierarchyScope,
   KnowledgeCardContent,
   KnowledgeCardMeta,
   StudyNotebook,
@@ -131,6 +132,13 @@ interface KnowledgeState {
     y: number;
     title?: string;
     template?: 'blank' | 'law' | 'jurisprudence';
+    initialStyle?: Partial<
+      Pick<
+        KnowledgeCardMeta,
+        'color' | 'typography' | 'titleStyle' | 'borderStyle' | 'borderWidth' | 'paperStyle'
+      >
+    >;
+    initialPadding?: CanvasNodePosition['padding'];
   }) => Promise<string>;
   createCardFromPdf: (params: {
     title: string;
@@ -148,7 +156,10 @@ interface KnowledgeState {
   deleteCard: (cardId: string) => Promise<void>;
   updateCardsMetaBulk: (cardIds: string[], patch: Partial<KnowledgeCardMeta>) => Promise<void>;
   deleteCanvasSelection: (nodeIds: string[], edgeIds: string[]) => Promise<void>;
-  duplicateCanvasNodes: (nodeIds: string[]) => Promise<string[]>;
+  duplicateCanvasNodes: (
+    nodeIds: string[],
+    options?: { targetCenter?: { x: number; y: number } }
+  ) => Promise<string[]>;
   importOutlineToCanvas: (outlineText: string) => Promise<void>;
   restoreCanvasSnapshot: (
     nodes: CanvasNodePosition[],
@@ -173,8 +184,24 @@ interface KnowledgeState {
   deleteCanvasStroke: (strokeId: string) => Promise<void>;
   restoreCanvasStroke: (stroke: CanvasStroke) => Promise<void>;
   clearCanvasStrokes: () => Promise<void>;
-  createWorkspace: (name: string, icon?: string) => Promise<void>;
+  createWorkspace: (
+    name: string,
+    icon?: string,
+    color?: string,
+    description?: string
+  ) => Promise<void>;
+  updateWorkspace: (
+    workspaceId: string,
+    patch: Partial<Pick<Workspace, 'name' | 'icon' | 'color' | 'description'>>
+  ) => Promise<void>;
+  deleteWorkspace: (workspaceId: string) => Promise<boolean>;
   updateWorkspaceBookConfig: (patch: Partial<BookProjectConfig>) => Promise<void>;
+  transferHierarchyContent: (params: {
+    sourceId: string;
+    targetId: string;
+    mode: 'move' | 'swap';
+    includeDescendants?: boolean;
+  }) => Promise<{ movedCards: number; movedNodes: number; movedStrokes: number }>;
   deleteHierarchyItem: (id: string) => Promise<void>;
   createCanvasGroup: (
     x: number,
@@ -200,6 +227,22 @@ interface KnowledgeState {
     y: number;
     preset?: 'plain' | 'heading' | 'sticky' | 'callout';
     initialText?: string;
+    initialStyle?: Partial<
+      Pick<
+        CanvasNodePosition,
+        | 'color'
+        | 'bgColor'
+        | 'bgOpacity'
+        | 'borderStyle'
+        | 'borderWidth'
+        | 'sketch'
+        | 'textColor'
+        | 'textAlign'
+        | 'fontSize'
+        | 'typography'
+        | 'padding'
+      >
+    >;
   }) => Promise<string | null>;
   duplicateCanvasText: (nodeId: string) => Promise<string | null>;
   createCanvasTopic: (params: {
@@ -209,6 +252,22 @@ interface KnowledgeState {
     shape?: TopicShape;
     color?: string;
     parentTopicId?: string | null;
+    initialStyle?: Partial<
+      Pick<
+        CanvasNodePosition,
+        | 'bgColor'
+        | 'bgOpacity'
+        | 'borderStyle'
+        | 'borderWidth'
+        | 'sketch'
+        | 'textColor'
+        | 'textAlign'
+        | 'fontSize'
+        | 'typography'
+        | 'padding'
+        | 'topicConfig'
+      >
+    >;
   }) => Promise<string | null>;
   createSubtopic: (
     parentNodeId: string,
@@ -811,7 +870,14 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => {
     return { cardId: newCardId, title };
   },
 
-  createCardOnCanvas: async ({ x, y, title = 'Novo Knowledge Card', template = 'blank' }) => {
+  createCardOnCanvas: async ({
+    x,
+    y,
+    title = 'Novo Knowledge Card',
+    template = 'blank',
+    initialStyle,
+    initialPadding,
+  }) => {
     const state = get();
     const repo = getKnowledgeRepository();
     const workspaceId = state.activeWorkspaceId!;
@@ -891,7 +957,17 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => {
           : '',
       notes: '',
       tags: template !== 'blank' ? [template] : [],
-      color: template === 'law' ? 'amber' : template === 'jurisprudence' ? 'emerald' : 'default',
+      color:
+        template === 'law'
+          ? 'amber'
+          : template === 'jurisprudence'
+          ? 'emerald'
+          : initialStyle?.color ?? 'default',
+      ...(initialStyle?.typography ? { typography: deepClone(initialStyle.typography) } : {}),
+      ...(initialStyle?.titleStyle ? { titleStyle: deepClone(initialStyle.titleStyle) } : {}),
+      ...(initialStyle?.borderStyle ? { borderStyle: initialStyle.borderStyle } : {}),
+      ...(initialStyle?.borderWidth ? { borderWidth: initialStyle.borderWidth } : {}),
+      ...(initialStyle?.paperStyle ? { paperStyle: initialStyle.paperStyle } : {}),
       isFavorite: false,
       isPinned: false,
       importance: 'normal',
@@ -926,7 +1002,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => {
       subsubjectId: chain.subsubjectId,
       topicId: chain.topicId,
       sizingMode: 'auto',
-      padding: 'md',
+      padding: initialPadding ?? 'md',
       x,
       y,
       width: 340,
@@ -1276,75 +1352,196 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => {
     ]);
   },
 
-  duplicateCanvasNodes: async (nodeIds) => {
+  duplicateCanvasNodes: async (nodeIds, options) => {
     const repo = getKnowledgeRepository();
     const state = get();
     const workspaceId = state.activeWorkspaceId;
-    if (!workspaceId) return [];
+    if (!workspaceId || nodeIds.length === 0) return [];
+
+    const uniqueIds = Array.from(new Set(nodeIds));
+    const sourceNodes = uniqueIds
+      .map((id) => state.canvasNodes.find((n) => n.id === id))
+      .filter((n): n is CanvasNodePosition => Boolean(n));
+
+    if (sourceNodes.length === 0) return [];
+
     recordHistory();
 
     const now = Date.now();
+    const targetCardChain = resolveHierarchyChain(state.hierarchy, state.selectedHierarchyId);
+    const targetOptScope = resolveOptionalHierarchyScope(state.hierarchy, state.selectedHierarchyId);
+
+    // Detecta se a colagem está acontecendo em outro assunto/tópico para recentralizar e ajustar o escopo
+    const isCrossContextPaste =
+      state.selectedHierarchyId !== null &&
+      sourceNodes.some((sn) => {
+        const scope =
+          sn.nodeType === 'knowledgeCard' && sn.cardId && state.cardsById[sn.cardId]
+            ? state.cardsById[sn.cardId]
+            : sn;
+        return !matchesHierarchyContext(scope, state.selectedHierarchyId, state.hierarchy);
+      });
+
+    let dx = 44;
+    let dy = 44;
+    if (isCrossContextPaste && options?.targetCenter) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const sn of sourceNodes) {
+        const w = sn.width || (sn.nodeType === 'group' ? 640 : 300);
+        const h = sn.height || (sn.nodeType === 'group' ? 360 : 180);
+        minX = Math.min(minX, sn.x);
+        minY = Math.min(minY, sn.y);
+        maxX = Math.max(maxX, sn.x + w);
+        maxY = Math.max(maxY, sn.y + h);
+      }
+      if (Number.isFinite(minX)) {
+        dx = Math.round(options.targetCenter.x - (minX + maxX) / 2);
+        dy = Math.round(options.targetCenter.y - (minY + maxY) / 2);
+      }
+    }
+
+    const idMap = new Map<string, string>();
+    for (const sn of sourceNodes) {
+      const prefix =
+        sn.nodeType === 'topic'
+          ? 'top'
+          : sn.nodeType === 'text'
+          ? 'txt'
+          : sn.nodeType === 'image'
+          ? 'img'
+          : sn.nodeType === 'group'
+          ? 'grp'
+          : 'node';
+      idMap.set(sn.id, `${prefix}-${crypto.randomUUID()}`);
+    }
+
     const newCardsMap: Record<string, KnowledgeCardMeta> = { ...state.cardsById };
     const createdCanvasNodes: CanvasNodePosition[] = [];
 
-    for (const nodeId of nodeIds) {
-      const sourceNode = state.canvasNodes.find((n) => n.id === nodeId);
-      if (!sourceNode || sourceNode.nodeType !== 'knowledgeCard' || !sourceNode.cardId) continue;
+    for (const sourceNode of sourceNodes) {
+      const newNodeId = idMap.get(sourceNode.id)!;
+      const mappedGroupId =
+        sourceNode.groupId && idMap.has(sourceNode.groupId)
+          ? idMap.get(sourceNode.groupId)
+          : sourceNode.groupId;
 
-      const full = await repo.getFullCard(sourceNode.cardId);
-      if (!full) continue;
+      if (sourceNode.nodeType === 'knowledgeCard' && sourceNode.cardId) {
+        const full = await repo.getFullCard(sourceNode.cardId);
+        if (!full) continue;
 
-      const newCardId = `card-${crypto.randomUUID()}`;
-      const newNodeId = `node-${crypto.randomUUID()}`;
+        const newCardId = `card-${crypto.randomUUID()}`;
+        const scopePatch = isCrossContextPaste ? targetCardChain : {};
 
-      const clonedMeta: KnowledgeCardMeta = {
-        ...full.meta,
-        id: newCardId,
-        title: `${full.meta.title} (Cópia)`,
-        reviewCount: 0,
-        lastReviewedAt: null,
-        createdAt: now,
-        updatedAt: now,
-        deletedAt: null,
-        syncStatus: 'local_only',
-        version: 1,
-      };
-      clonedMeta.searchTokens = buildSearchTokens([
-        clonedMeta.title,
-        clonedMeta.excerpt,
-        clonedMeta.notes,
-        ...clonedMeta.tags,
-      ]);
+        const clonedMeta: KnowledgeCardMeta = {
+          ...deepClone(full.meta),
+          ...scopePatch,
+          id: newCardId,
+          title: isCrossContextPaste ? full.meta.title : `${full.meta.title} (Cópia)`,
+          reviewCount: 0,
+          lastReviewedAt: null,
+          nextReviewAt: null,
+          createdAt: now,
+          updatedAt: now,
+          deletedAt: null,
+          syncStatus: 'local_only',
+          version: 1,
+        };
+        clonedMeta.searchTokens = buildSearchTokens([
+          clonedMeta.title,
+          clonedMeta.excerpt,
+          clonedMeta.notes,
+          ...clonedMeta.tags,
+        ]);
 
-      const clonedContent: KnowledgeCardContent = {
-        ...full.content,
-        cardId: newCardId,
-        updatedAt: now,
-      };
+        const clonedContent: KnowledgeCardContent = {
+          ...deepClone(full.content),
+          cardId: newCardId,
+          updatedAt: now,
+        };
 
-      const clonedCanvasNode: CanvasNodePosition = {
-        ...sourceNode,
+        const clonedCanvasNode: CanvasNodePosition = {
+          ...deepClone(sourceNode),
+          ...(isCrossContextPaste ? targetCardChain : {}),
+          id: newNodeId,
+          cardId: newCardId,
+          groupId: mappedGroupId,
+          x: Math.round(sourceNode.x + dx),
+          y: Math.round(sourceNode.y + dy),
+          createdAt: now,
+          updatedAt: now,
+          deletedAt: null,
+          syncStatus: 'local_only',
+          version: 1,
+        };
+
+        cardContentCache.set(newCardId, deepClone(clonedContent));
+        await repo.saveCard(clonedMeta, clonedContent);
+        newCardsMap[newCardId] = clonedMeta;
+        createdCanvasNodes.push(clonedCanvasNode);
+        continue;
+      }
+
+      // Tópicos, Textos Livres, Imagens, Elementos/Adesivos e Grupos
+      const clonedNode: CanvasNodePosition = {
+        ...deepClone(sourceNode),
+        ...(isCrossContextPaste ? targetOptScope : {}),
         id: newNodeId,
-        cardId: newCardId,
-        x: Math.round(sourceNode.x + 48),
-        y: Math.round(sourceNode.y + 48),
+        groupId: mappedGroupId,
+        x: Math.round(sourceNode.x + dx),
+        y: Math.round(sourceNode.y + dy),
         createdAt: now,
         updatedAt: now,
         deletedAt: null,
         syncStatus: 'local_only',
         version: 1,
       };
+      if (clonedNode.topicConfig?.parentTopicId && idMap.has(clonedNode.topicConfig.parentTopicId)) {
+        clonedNode.topicConfig = {
+          ...clonedNode.topicConfig,
+          parentTopicId: idMap.get(clonedNode.topicConfig.parentTopicId) ?? null,
+        };
+      }
 
-      await repo.saveCard(clonedMeta, clonedContent);
-      newCardsMap[newCardId] = clonedMeta;
-      createdCanvasNodes.push(clonedCanvasNode);
+      createdCanvasNodes.push(clonedNode);
+    }
+
+    // Preserva conexões internas entre os itens copiados
+    const clonedEdges: CanvasConnection[] = [];
+    for (const edge of state.canvasEdges) {
+      const newSrc = idMap.get(edge.sourceNodeId);
+      const newTgt = idMap.get(edge.targetNodeId);
+      if (!newSrc || !newTgt) continue;
+
+      const copyEdge: CanvasConnection = {
+        ...deepClone(edge),
+        id: `edge-${crypto.randomUUID()}`,
+        sourceNodeId: newSrc,
+        targetNodeId: newTgt,
+        waypoints: edge.waypoints?.map((wp) => ({
+          x: Math.round(wp.x + dx),
+          y: Math.round(wp.y + dy),
+        })),
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+        syncStatus: 'local_only',
+        version: 1,
+      };
+      clonedEdges.push(copyEdge);
     }
 
     if (createdCanvasNodes.length > 0) {
-      await repo.upsertCanvasNodes(createdCanvasNodes);
+      await Promise.all([
+        repo.upsertCanvasNodes(createdCanvasNodes),
+        ...clonedEdges.map((e) => repo.saveCanvasConnection(e)),
+      ]);
       set((s) => ({
         cardsById: newCardsMap,
         canvasNodes: [...s.canvasNodes, ...createdCanvasNodes],
+        canvasEdges: [...s.canvasEdges, ...clonedEdges],
       }));
     }
 
@@ -1882,14 +2079,22 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => {
     await Promise.all(edges.map((e) => repo.saveCanvasConnection(e)));
   },
 
-  createWorkspace: async (name: string, icon = '📚') => {
+  createWorkspace: async (
+    name: string,
+    icon = '📚',
+    color = '#6366f1',
+    description = ''
+  ) => {
+    const cleanName = name.trim();
+    if (!cleanName) return;
     const repo = getKnowledgeRepository();
     const now = Date.now();
     const ws: Workspace = {
       id: `ws-${crypto.randomUUID()}`,
-      name,
+      name: cleanName,
       icon,
-      color: '#6366f1',
+      color,
+      description: description.trim() || undefined,
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
@@ -1899,6 +2104,332 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => {
     await repo.saveWorkspace(ws);
     set((s) => ({ workspaces: [...s.workspaces, ws] }));
     await get().selectWorkspace(ws.id);
+  },
+
+  updateWorkspace: async (workspaceId, patch) => {
+    const target = get().workspaces.find((w) => w.id === workspaceId);
+    if (!target) return;
+    const repo = getKnowledgeRepository();
+    const cleanPatch = { ...patch };
+    if (cleanPatch.name !== undefined) {
+      const trimmed = cleanPatch.name.trim();
+      if (!trimmed) delete cleanPatch.name;
+      else cleanPatch.name = trimmed;
+    }
+    if (cleanPatch.description !== undefined) {
+      cleanPatch.description = cleanPatch.description.trim() || undefined;
+    }
+
+    const updated: Workspace = {
+      ...target,
+      ...cleanPatch,
+      updatedAt: Date.now(),
+      version: target.version + 1,
+      syncStatus: 'pending_push',
+    };
+    set((s) => ({
+      workspaces: s.workspaces.map((w) => (w.id === workspaceId ? updated : w)),
+    }));
+    await repo.saveWorkspace(updated);
+  },
+
+  deleteWorkspace: async (workspaceId) => {
+    const state = get();
+    if (state.workspaces.length <= 1) return false;
+    const exists = state.workspaces.some((w) => w.id === workspaceId);
+    if (!exists) return false;
+
+    const repo = getKnowledgeRepository();
+    await repo.deleteWorkspace(workspaceId);
+
+    const remaining = state.workspaces.filter((w) => w.id !== workspaceId);
+    set({ workspaces: remaining });
+
+    if (state.activeWorkspaceId === workspaceId && remaining.length > 0) {
+      await get().selectWorkspace(remaining[0].id);
+    }
+    return true;
+  },
+
+  transferHierarchyContent: async ({
+    sourceId,
+    targetId,
+    mode,
+    includeDescendants = true,
+  }) => {
+    const state = get();
+    if (!sourceId || !targetId || sourceId === targetId) {
+      return { movedCards: 0, movedNodes: 0, movedStrokes: 0 };
+    }
+
+    const byId = new Map(state.hierarchy.map((h) => [h.id, h]));
+    if (!byId.has(sourceId) || !byId.has(targetId)) {
+      return { movedCards: 0, movedNodes: 0, movedStrokes: 0 };
+    }
+
+    const sourceDesc = getDescendantHierarchyIds(state.hierarchy, sourceId);
+    const targetDesc = getDescendantHierarchyIds(state.hierarchy, targetId);
+
+    // Em modo "swap", se um for ancestral do outro, evita sobreposição trocando apenas os itens diretos
+    const effectiveIncludeDesc =
+      mode === 'swap' && (sourceDesc.has(targetId) || targetDesc.has(sourceId))
+        ? false
+        : includeDescendants;
+
+    const sourceSet = effectiveIncludeDesc ? sourceDesc : new Set([sourceId]);
+    const targetSet = effectiveIncludeDesc ? targetDesc : new Set([targetId]);
+
+    const getLeafScopeId = (scope?: HierarchyScope | null): string | null => {
+      if (!scope) return null;
+      const candidates = [scope.topicId, scope.subsubjectId, scope.subjectId, scope.disciplineId];
+      for (const id of candidates) {
+        if (id && byId.has(id)) return id;
+      }
+      return null;
+    };
+
+    const inSource = (scope?: HierarchyScope | null): boolean => {
+      const leaf = getLeafScopeId(scope);
+      return Boolean(leaf && sourceSet.has(leaf));
+    };
+
+    const inTarget = (scope?: HierarchyScope | null): boolean => {
+      const leaf = getLeafScopeId(scope);
+      return Boolean(leaf && targetSet.has(leaf));
+    };
+
+    const sourceCardChain = resolveHierarchyChain(state.hierarchy, sourceId);
+    const targetCardChain = resolveHierarchyChain(state.hierarchy, targetId);
+    const sourceOptScope = resolveOptionalHierarchyScope(state.hierarchy, sourceId);
+    const targetOptScope = resolveOptionalHierarchyScope(state.hierarchy, targetId);
+
+    // Identifica cards e nós afetados
+    const sourceCardIds = new Set<string>();
+    const targetCardIds = new Set<string>();
+    for (const card of Object.values(state.cardsById)) {
+      if (inSource(card)) sourceCardIds.add(card.id);
+      else if (mode === 'swap' && inTarget(card)) targetCardIds.add(card.id);
+    }
+
+    const sourceNodeIds = new Set<string>();
+    const targetNodeIds = new Set<string>();
+    const existingTargetNodes: CanvasNodePosition[] = [];
+
+    for (const cn of state.canvasNodes) {
+      if (cn.nodeType === 'knowledgeCard') {
+        if (cn.cardId && sourceCardIds.has(cn.cardId)) {
+          sourceNodeIds.add(cn.id);
+        } else if (cn.cardId && targetCardIds.has(cn.cardId)) {
+          targetNodeIds.add(cn.id);
+        } else if (mode === 'move' && cn.cardId && state.cardsById[cn.cardId] && inTarget(state.cardsById[cn.cardId])) {
+          existingTargetNodes.push(cn);
+        }
+      } else {
+        if (inSource(cn)) {
+          sourceNodeIds.add(cn.id);
+        } else if (mode === 'swap' && inTarget(cn)) {
+          targetNodeIds.add(cn.id);
+        } else if (mode === 'move' && inTarget(cn)) {
+          existingTargetNodes.push(cn);
+        }
+      }
+    }
+
+    const sourceStrokeIds = new Set<string>();
+    const targetStrokeIds = new Set<string>();
+    for (const st of state.canvasStrokes) {
+      if (inSource(st)) sourceStrokeIds.add(st.id);
+      else if (mode === 'swap' && inTarget(st)) targetStrokeIds.add(st.id);
+    }
+
+    const totalAffected =
+      sourceCardIds.size +
+      targetCardIds.size +
+      sourceNodeIds.size +
+      targetNodeIds.size +
+      sourceStrokeIds.size +
+      targetStrokeIds.size;
+
+    if (totalAffected === 0) {
+      return { movedCards: 0, movedNodes: 0, movedStrokes: 0 };
+    }
+
+    // No modo "move", se o destino já possuir itens, posiciona os itens movidos ao lado sem sobrepor
+    let offsetX = 0;
+    let offsetY = 0;
+    if (mode === 'move' && existingTargetNodes.length > 0 && sourceNodeIds.size > 0) {
+      let targetMaxX = -Infinity;
+      let targetMinY = Infinity;
+      for (const tn of existingTargetNodes) {
+        const w = tn.width || (tn.nodeType === 'group' ? 640 : 340);
+        targetMaxX = Math.max(targetMaxX, tn.x + w);
+        targetMinY = Math.min(targetMinY, tn.y);
+      }
+
+      let sourceMinX = Infinity;
+      let sourceMinY = Infinity;
+      for (const sn of state.canvasNodes) {
+        if (!sourceNodeIds.has(sn.id)) continue;
+        sourceMinX = Math.min(sourceMinX, sn.x);
+        sourceMinY = Math.min(sourceMinY, sn.y);
+      }
+
+      if (Number.isFinite(targetMaxX) && Number.isFinite(sourceMinX)) {
+        offsetX = Math.round(targetMaxX + 96 - sourceMinX);
+        offsetY = Math.round(targetMinY - sourceMinY);
+      }
+    }
+
+    recordHistory();
+
+    const now = Date.now();
+    const repo = getKnowledgeRepository();
+
+    const nextCardsById: Record<string, KnowledgeCardMeta> = { ...state.cardsById };
+    const modifiedCards: KnowledgeCardMeta[] = [];
+
+    for (const cid of sourceCardIds) {
+      const card = nextCardsById[cid];
+      if (!card) continue;
+      const updated: KnowledgeCardMeta = {
+        ...card,
+        ...targetCardChain,
+        updatedAt: now,
+        version: card.version + 1,
+        syncStatus: 'pending_push',
+      };
+      nextCardsById[cid] = updated;
+      modifiedCards.push(updated);
+    }
+
+    for (const cid of targetCardIds) {
+      const card = nextCardsById[cid];
+      if (!card) continue;
+      const updated: KnowledgeCardMeta = {
+        ...card,
+        ...sourceCardChain,
+        updatedAt: now,
+        version: card.version + 1,
+        syncStatus: 'pending_push',
+      };
+      nextCardsById[cid] = updated;
+      modifiedCards.push(updated);
+    }
+
+    const modifiedNodes: CanvasNodePosition[] = [];
+    const nextCanvasNodes = state.canvasNodes.map((cn) => {
+      if (sourceNodeIds.has(cn.id)) {
+        const scopePatch = cn.nodeType === 'knowledgeCard' ? targetCardChain : targetOptScope;
+        const updated: CanvasNodePosition = {
+          ...cn,
+          ...scopePatch,
+          x: Math.round(cn.x + offsetX),
+          y: Math.round(cn.y + offsetY),
+          updatedAt: now,
+          version: cn.version + 1,
+          syncStatus: 'pending_push',
+        };
+        modifiedNodes.push(updated);
+        return updated;
+      }
+      if (targetNodeIds.has(cn.id)) {
+        const scopePatch = cn.nodeType === 'knowledgeCard' ? sourceCardChain : sourceOptScope;
+        const updated: CanvasNodePosition = {
+          ...cn,
+          ...scopePatch,
+          updatedAt: now,
+          version: cn.version + 1,
+          syncStatus: 'pending_push',
+        };
+        modifiedNodes.push(updated);
+        return updated;
+      }
+      return cn;
+    });
+
+    const modifiedEdges: CanvasConnection[] = [];
+    const nextCanvasEdges = state.canvasEdges.map((edge) => {
+      if (
+        (offsetX !== 0 || offsetY !== 0) &&
+        sourceNodeIds.has(edge.sourceNodeId) &&
+        sourceNodeIds.has(edge.targetNodeId) &&
+        edge.waypoints &&
+        edge.waypoints.length > 0
+      ) {
+        const updated: CanvasConnection = {
+          ...edge,
+          waypoints: edge.waypoints.map((wp) => ({
+            x: Math.round(wp.x + offsetX),
+            y: Math.round(wp.y + offsetY),
+          })),
+          updatedAt: now,
+          version: edge.version + 1,
+          syncStatus: 'pending_push',
+        };
+        modifiedEdges.push(updated);
+        return updated;
+      }
+      return edge;
+    });
+
+    const modifiedStrokes: CanvasStroke[] = [];
+    const nextCanvasStrokes = state.canvasStrokes.map((st) => {
+      if (sourceStrokeIds.has(st.id)) {
+        const updated: CanvasStroke = {
+          ...st,
+          ...targetOptScope,
+          points:
+            offsetX !== 0 || offsetY !== 0
+              ? st.points.map((pt) => ({ ...pt, x: pt.x + offsetX, y: pt.y + offsetY }))
+              : st.points,
+          updatedAt: now,
+          version: st.version + 1,
+          syncStatus: 'pending_push',
+        };
+        modifiedStrokes.push(updated);
+        return updated;
+      }
+      if (targetStrokeIds.has(st.id)) {
+        const updated: CanvasStroke = {
+          ...st,
+          ...sourceOptScope,
+          updatedAt: now,
+          version: st.version + 1,
+          syncStatus: 'pending_push',
+        };
+        modifiedStrokes.push(updated);
+        return updated;
+      }
+      return st;
+    });
+
+    set((s) => ({
+      cardsById: nextCardsById,
+      canvasNodes: nextCanvasNodes,
+      canvasEdges: nextCanvasEdges,
+      canvasStrokes: nextCanvasStrokes,
+      activeFullCard:
+        s.activeFullCard && nextCardsById[s.activeFullCard.meta.id]
+          ? { ...s.activeFullCard, meta: nextCardsById[s.activeFullCard.meta.id] }
+          : s.activeFullCard,
+      secondaryFullCard:
+        s.secondaryFullCard && nextCardsById[s.secondaryFullCard.meta.id]
+          ? { ...s.secondaryFullCard, meta: nextCardsById[s.secondaryFullCard.meta.id] }
+          : s.secondaryFullCard,
+    }));
+
+    await Promise.all([
+      ...modifiedCards.map((m) => repo.saveCard(m)),
+      modifiedNodes.length > 0 ? repo.upsertCanvasNodes(modifiedNodes) : Promise.resolve(),
+      ...modifiedEdges.map((e) => repo.saveCanvasConnection(e)),
+      ...modifiedStrokes.map((st) => repo.saveCanvasStroke(st)),
+    ]);
+
+    return {
+      movedCards: sourceCardIds.size + targetCardIds.size,
+      movedNodes: sourceNodeIds.size + targetNodeIds.size,
+      movedStrokes: sourceStrokeIds.size + targetStrokeIds.size,
+    };
   },
 
   updateWorkspaceBookConfig: async (patch) => {
@@ -2025,7 +2556,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => {
     await repo.upsertCanvasNodes([updated]);
   },
 
-  createCanvasText: async ({ x, y, preset = 'plain', initialText = '' }) => {
+  createCanvasText: async ({ x, y, preset = 'plain', initialText = '', initialStyle }) => {
     const state = get();
     const workspaceId = state.activeWorkspaceId;
     if (!workspaceId) return null;
@@ -2125,6 +2656,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => {
       nodeType: 'text',
       ...scope,
       ...style,
+      ...(initialStyle ? deepClone(initialStyle) : {}),
       textJson,
       plainText: initialText,
       x: Math.round(x),
@@ -2172,6 +2704,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => {
     shape = 'rounded',
     color = '#6366f1',
     parentTopicId = null,
+    initialStyle,
   }) => {
     const state = get();
     const workspaceId = state.activeWorkspaceId;
@@ -2197,6 +2730,7 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => {
     };
 
     const dims = defaultDims[shape];
+    const clonedInit = initialStyle ? deepClone(initialStyle) : undefined;
     const topicNode: CanvasNodePosition = {
       id: `top-${crypto.randomUUID()}`,
       workspaceId,
@@ -2204,21 +2738,23 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => {
       ...scope,
       label,
       color,
-      bgColor: color,
-      bgOpacity: 'tinted',
-      borderStyle: 'solid',
-      borderWidth: 'medium',
-      padding: 'sm',
-      textAlign: 'center',
-      fontSize: 15,
-      sketch: shape === 'cloud' || shape === 'sticky-tape',
-      typography: { fontSize: 15, lineHeight: 1.3, paragraphSpacing: 4 },
+      bgColor: clonedInit?.bgColor ?? color,
+      bgOpacity: clonedInit?.bgOpacity ?? 'tinted',
+      borderStyle: clonedInit?.borderStyle ?? 'solid',
+      borderWidth: clonedInit?.borderWidth ?? 'medium',
+      padding: clonedInit?.padding ?? 'sm',
+      textColor: clonedInit?.textColor,
+      textAlign: clonedInit?.textAlign ?? 'center',
+      fontSize: clonedInit?.fontSize ?? 15,
+      sketch: clonedInit?.sketch ?? (shape === 'cloud' || shape === 'sticky-tape'),
+      typography: clonedInit?.typography ?? { fontSize: 15, lineHeight: 1.3, paragraphSpacing: 4 },
       topicConfig: {
         shape,
-        shadow: 'md',
-        doubleBorder: shape === 'cloud',
+        shadow: clonedInit?.topicConfig?.shadow ?? 'md',
+        doubleBorder: clonedInit?.topicConfig?.doubleBorder ?? shape === 'cloud',
+        textStyle: clonedInit?.topicConfig?.textStyle,
         parentTopicId,
-        defaultEdgeStyle: {
+        defaultEdgeStyle: clonedInit?.topicConfig?.defaultEdgeStyle ?? {
           edgeType: 'default',
           color,
           lineStyle: 'solid',
@@ -2263,6 +2799,13 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => {
     const posX = Math.round(parent.x + (parent.width || 210) + 110);
     const posY = Math.round(parent.y + existingChildrenCount * (childH + 28) - (existingChildrenCount > 0 ? 14 : 0));
 
+    const inheritedTextStyle = parent.topicConfig?.textStyle
+      ? deepClone(parent.topicConfig.textStyle)
+      : undefined;
+    const inheritedTypo = parent.typography
+      ? deepClone(parent.typography)
+      : { fontSize: parent.fontSize ?? 14, lineHeight: 1.3, paragraphSpacing: 4 };
+
     const topicNode: CanvasNodePosition = {
       id: `top-${crypto.randomUUID()}`,
       workspaceId,
@@ -2273,23 +2816,29 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => {
       topicId: parent.topicId ?? null,
       label: options?.label ?? 'Subtópico',
       color: childColor,
-      bgColor: childColor,
-      bgOpacity: 'subtle',
-      borderStyle: 'solid',
-      borderWidth: 'thin',
-      padding: 'sm',
-      textAlign: 'center',
-      fontSize: 14,
-      typography: { fontSize: 14, lineHeight: 1.3, paragraphSpacing: 4 },
+      bgColor: parent.bgColor ?? childColor,
+      bgOpacity: parent.bgOpacity ?? 'subtle',
+      borderStyle: parent.borderStyle ?? 'solid',
+      borderWidth: parent.borderWidth ?? 'thin',
+      sketch: parent.sketch,
+      padding: parent.padding ?? 'sm',
+      textColor: parent.textColor,
+      textAlign: parent.textAlign ?? 'center',
+      fontSize: inheritedTextStyle?.fontSize ?? inheritedTypo.fontSize ?? parent.fontSize ?? 14,
+      typography: inheritedTypo,
       topicConfig: {
         shape: childShape,
-        shadow: 'sm',
+        shadow: parent.topicConfig?.shadow ?? 'sm',
+        doubleBorder: parent.topicConfig?.doubleBorder,
+        textStyle: inheritedTextStyle,
         parentTopicId: parent.id,
-        defaultEdgeStyle: parent.topicConfig?.defaultEdgeStyle ?? {
-          edgeType: 'default',
-          color: childColor,
-          lineStyle: 'solid',
-        },
+        defaultEdgeStyle: parent.topicConfig?.defaultEdgeStyle
+          ? deepClone(parent.topicConfig.defaultEdgeStyle)
+          : {
+              edgeType: 'default',
+              color: childColor,
+              lineStyle: 'solid',
+            },
       },
       x: posX,
       y: posY,

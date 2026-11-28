@@ -28,6 +28,7 @@ export interface IKnowledgeRepository {
   // Workspaces
   listWorkspaces(): Promise<Workspace[]>;
   saveWorkspace(workspace: Workspace): Promise<void>;
+  deleteWorkspace(id: string): Promise<void>;
 
   // Meus Cadernos (Polinização Cruzada)
   listNotebooks(): Promise<StudyNotebook[]>;

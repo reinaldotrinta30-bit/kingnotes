@@ -94,6 +94,9 @@ import { CanvasImageNode } from './CanvasImageNode';
 import { CanvasTextNode } from './CanvasTextNode';
 import { PanoramaSectionNode } from './PanoramaSectionNode';
 import { CanvasTopicNode } from './CanvasTopicNode';
+import { HierarchyFolderNode } from './HierarchyFolderNode';
+import { HierarchySlideNode } from './HierarchySlideNode';
+import { computeCanvasExplorerLayout } from '../utils/canvasExplorerLayout';
 import { TypographyPopover } from './TypographyPopover';
 import { CalloutCustomizerPopover } from './CalloutCustomizerPopover';
 import {
@@ -124,6 +127,8 @@ const nodeTypes = {
   canvasText: CanvasTextNode,
   panoramaSection: PanoramaSectionNode,
   canvasTopic: CanvasTopicNode,
+  hierarchyFolder: HierarchyFolderNode,
+  hierarchySlide: HierarchySlideNode,
 };
 
 const edgeTypes = {
@@ -209,6 +214,7 @@ function CanvasInner() {
     setSelectedEdgeLabelId,
     editingEdgeLabelId,
     setEditingEdgeLabelId,
+    hasUnsavedEditorChanges,
     clearTransientCanvasUi,
   } = useUiStore();
   const {
@@ -260,6 +266,7 @@ function CanvasInner() {
   const [isPlacingText, setIsPlacingText] = useState(false);
   const [liveViewport, setLiveViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 });
   const [openHeaderMenu, setOpenHeaderMenu] = useState<null | 'layout' | 'edge' | 'spotlight'>(null);
+  const [directMapOverrideKey, setDirectMapOverrideKey] = useState<string | null>(null);
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
   const [isStickerPanelOpen, setIsStickerPanelOpen] = useState(false);
 
@@ -342,6 +349,38 @@ function CanvasInner() {
     setCanUndo(true);
     setCanRedo(false);
   }, []);
+
+  const currentContextKey = `${activeWorkspaceId ?? ''}::${selectedHierarchyId ?? 'ALL'}`;
+  const isForcedDirectMap = directMapOverrideKey === currentContextKey;
+
+  const handleOpenFromExplorer = useCallback(
+    (targetHierarchyId: string | null) => {
+      const apply = () => {
+        clearTransientCanvasUi();
+        setDirectMapOverrideKey(null);
+        selectHierarchy(targetHierarchyId);
+      };
+
+      if (hasUnsavedEditorChanges) {
+        openConfirm({
+          title: 'Descartar alterações não salvas?',
+          description:
+            'Há edições pendentes no painel atual. Deseja trocar de contexto e descartá-las?',
+          confirmLabel: 'Trocar de contexto',
+          variant: 'danger',
+          onConfirm: apply,
+        });
+        return;
+      }
+
+      apply();
+    },
+    [clearTransientCanvasUi, selectHierarchy, hasUnsavedEditorChanges, openConfirm]
+  );
+
+  const handleOpenDirectMap = useCallback(() => {
+    setDirectMapOverrideKey(currentContextKey);
+  }, [currentContextKey]);
 
   const handleQuickSubtopic = useCallback(
     async (
@@ -555,7 +594,39 @@ function CanvasInner() {
     },
     [pushHistorySnapshot, getSmartViewportPos, createCanvasImage, addToast]
   );
+  
 
+  // Navegação Espacial: Pastas de Disciplinas (raiz) -> Mini-Slides (níveis pais) -> Mapa Completo (folhas)
+  const explorerLayout = useMemo(() => {
+    if (isForcedDirectMap) {
+      return {
+        mode: 'map' as const,
+        folders: [],
+        slides: [],
+        hasDirectItemsAtCurrentLevel: false,
+      };
+    }
+    return computeCanvasExplorerLayout({
+      hierarchy,
+      selectedHierarchyId,
+      cardsById,
+      canvasNodes,
+      canvasEdges,
+      canvasStrokes,
+    });
+  }, [
+    isForcedDirectMap,
+    hierarchy,
+    selectedHierarchyId,
+    cardsById,
+    canvasNodes,
+    canvasEdges,
+    canvasStrokes,
+  ]);
+
+  const isExplorerMode = explorerLayout.mode !== 'map';
+
+  // Calcula projeção em Panorama Sequencial quando em mapa direto com múltiplos sub-mapas
   const panorama = useMemo(() => {
     const visibleNodes = canvasNodes.filter((cn) => {
       if (cn.nodeType === 'knowledgeCard') {
@@ -582,7 +653,50 @@ function CanvasInner() {
     syncActiveProjectionOffsets(panorama.nodeOffsets, panorama.strokeOffsets);
   }, [panorama]);
 
+  // Sincroniza Zustand -> React Flow (Pastas -> Mini-Slides -> Mapa Completo)
   useEffect(() => {
+    if (explorerLayout.mode === 'folders') {
+      setNodes(
+        explorerLayout.folders.map((folder) => ({
+          id: folder.id,
+          type: 'hierarchyFolder',
+          position: { x: folder.x, y: folder.y },
+          draggable: false,
+          selectable: false,
+          connectable: false,
+          focusable: false,
+          style: { width: folder.width, height: folder.height },
+          data: {
+            folder,
+            onOpenHierarchy: handleOpenFromExplorer,
+            onOpenDirectMap: handleOpenDirectMap,
+          },
+        }))
+      );
+      return;
+    }
+
+    if (explorerLayout.mode === 'slides') {
+      setNodes(
+        explorerLayout.slides.map((card) => ({
+          id: card.id,
+          type: 'hierarchySlide',
+          position: { x: card.x, y: card.y },
+          draggable: false,
+          selectable: false,
+          connectable: false,
+          focusable: false,
+          style: { width: card.width, height: card.height },
+          data: {
+            card,
+            onOpenHierarchy: handleOpenFromExplorer,
+            onOpenDirectMap: handleOpenDirectMap,
+          },
+        }))
+      );
+      return;
+    }
+
     setNodes((prevNodes) => {
       const prevMap = new Map(prevNodes.map((n) => [n.id, n]));
       const next: Node[] = [];
@@ -720,6 +834,9 @@ function CanvasInner() {
     inlineEditingCardId,
     editingTextNodeId,
     editingTopicNodeId,
+    explorerLayout,
+    handleOpenFromExplorer,
+    handleOpenDirectMap,
     handleQuickSubtopic,
     openCard,
     saveViewport,
@@ -727,6 +844,10 @@ function CanvasInner() {
   ]);
 
   useEffect(() => {
+    if (isExplorerMode) {
+      setEdges([]);
+      return;
+    }
     const visibleNodeIds = new Set<string>();
     for (const cn of canvasNodes) {
       if (cn.nodeType === 'knowledgeCard') {
@@ -788,7 +909,7 @@ function CanvasInner() {
           };
         });
     });
-  }, [canvasEdges, canvasNodes, cardsById, hierarchy, selectedHierarchyId, panorama, handleResetEdgeToAuto, setEdges]);
+  }, [canvasEdges, canvasNodes, cardsById, hierarchy, selectedHierarchyId, panorama, handleResetEdgeToAuto, isExplorerMode, setEdges]);
 
   const preEditViewportRef = useRef<Viewport | null>(null);
   const manualMoveDuringEditRef = useRef(false);
@@ -907,7 +1028,7 @@ function CanvasInner() {
     setNodes((nds) => (nds.some((n) => n.selected) ? nds.map((n) => ({ ...n, selected: false })) : nds));
     setEdges((eds) => (eds.some((e) => e.selected) ? eds.map((e) => ({ ...e, selected: false })) : eds));
 
-    const contextKey = `${activeWorkspaceId ?? ''}::${selectedHierarchyId ?? 'ALL'}`;
+    const contextKey = `${activeWorkspaceId ?? ''}::${selectedHierarchyId ?? 'ALL'}::${explorerLayout.mode}`;
     if (prevContextKeyRef.current !== null && prevContextKeyRef.current !== contextKey) {
       const timer = setTimeout(() => {
         fitCanvasWithMargins({ duration: 420, maxZoom: 1.05 });
@@ -916,7 +1037,7 @@ function CanvasInner() {
       return () => clearTimeout(timer);
     }
     prevContextKeyRef.current = contextKey;
-  }, [activeWorkspaceId, selectedHierarchyId, setSelectedEdgeLabelId, setEditingEdgeLabelId, setNodes, setEdges, fitCanvasWithMargins]);
+  }, [activeWorkspaceId, selectedHierarchyId, explorerLayout.mode, setSelectedEdgeLabelId, setEditingEdgeLabelId, setNodes, setEdges, fitCanvasWithMargins]);
 
   const activeBreadcrumb = useMemo(
     () => getHierarchyBreadcrumb(hierarchy, selectedHierarchyId),
@@ -944,7 +1065,7 @@ function CanvasInner() {
     if (nodes.length === 0) return;
     restoredWorkspaceRef.current = activeWorkspaceId;
 
-    const saved = localStorage.getItem(`kc_vp_${activeWorkspaceId}`);
+    const saved = !isExplorerMode ? localStorage.getItem(`kc_vp_${activeWorkspaceId}`) : null;
     if (saved) {
       try {
         const vp = JSON.parse(saved) as Viewport;
@@ -960,9 +1081,27 @@ function CanvasInner() {
     setTimeout(() => fitCanvasWithMargins({ duration: 350, maxZoom: 1.05 }), 90);
   }, [activeWorkspaceId, nodes.length, setViewport, fitCanvasWithMargins]);
 
+  // "Voar até o Card" (abre automaticamente o mapa do card se estiver em Pastas/Mini-Slides)
   useEffect(() => {
     if (!focusRequest) return;
+    const targetCard = cardsById[focusRequest.cardId];
     const targetCanvasNode = canvasNodes.find((n) => n.cardId === focusRequest.cardId);
+
+    if (isExplorerMode && targetCard) {
+      const leafId =
+        targetCard.topicId ||
+        targetCard.subsubjectId ||
+        targetCard.subjectId ||
+        (targetCard.disciplineId !== 'unassigned' ? targetCard.disciplineId : null);
+
+      if (leafId && leafId !== selectedHierarchyId) {
+        selectHierarchy(leafId);
+        return;
+      }
+      setDirectMapOverrideKey(currentContextKey);
+      return;
+    }
+
     if (targetCanvasNode) {
       setTimeout(() => {
         fitCanvasWithMargins({
@@ -974,7 +1113,18 @@ function CanvasInner() {
       }, 60);
     }
     clearFocusRequest();
-  }, [focusRequest, canvasNodes, fitCanvasWithMargins, triggerCardHighlight, clearFocusRequest]);
+  }, [
+    focusRequest,
+    isExplorerMode,
+    cardsById,
+    canvasNodes,
+    selectedHierarchyId,
+    selectHierarchy,
+    currentContextKey,
+    fitCanvasWithMargins,
+    triggerCardHighlight,
+    clearFocusRequest,
+  ]);
 
   useEffect(() => {
     if (!openHeaderMenu && !isContextMenuOpen) return;
@@ -1859,6 +2009,7 @@ function CanvasInner() {
     template: 'blank' | 'law' | 'jurisprudence',
     title?: string
   ) => {
+    if (isExplorerMode) setDirectMapOverrideKey(currentContextKey);
     pushHistorySnapshot();
     const pos = getSmartViewportPos(340, 180);
     const id = await createCardOnCanvas({
@@ -1871,26 +2022,29 @@ function CanvasInner() {
   };
 
   const handleCreateQuickGroup = async () => {
-    pushHistorySnapshot();
-    const pos = getSmartViewportPos(640, 360);
-    await createCanvasGroup(pos.x, pos.y);
-  };
+  if (isExplorerMode) setDirectMapOverrideKey(currentContextKey);
+  pushHistorySnapshot();
+  const pos = getSmartViewportPos(640, 360);
+  await createCanvasGroup(pos.x, pos.y);
+};
 
-  const handleCreateQuickTopic = async (shape: TopicShape = 'rounded') => {
-    pushHistorySnapshot();
-    const pos = getSmartViewportPos(210, 74);
-    const id = await createCanvasTopic({ x: pos.x, y: pos.y, shape });
-    if (id) setEditingTopicNodeId(id);
-  };
+const handleCreateQuickTopic = async (shape: TopicShape = 'rounded') => {
+  if (isExplorerMode) setDirectMapOverrideKey(currentContextKey);
+  pushHistorySnapshot();
+  const pos = getSmartViewportPos(210, 74);
+  const id = await createCanvasTopic({ x: pos.x, y: pos.y, shape });
+  if (id) setEditingTopicNodeId(id);
+};
 
-  const handleCreateQuickText = async (
-    preset: 'plain' | 'heading' | 'sticky' | 'callout' = 'plain'
-  ) => {
-    pushHistorySnapshot();
-    const pos = getSmartViewportPos(280, 100);
-    const id = await createCanvasText({ x: pos.x, y: pos.y, preset });
-    if (id) setEditingTextNodeId(id);
-  };
+const handleCreateQuickText = async (
+  preset: 'plain' | 'heading' | 'sticky' | 'callout' = 'plain'
+) => {
+  if (isExplorerMode) setDirectMapOverrideKey(currentContextKey);
+  pushHistorySnapshot();
+  const pos = getSmartViewportPos(280, 100);
+  const id = await createCanvasText({ x: pos.x, y: pos.y, preset });
+  if (id) setEditingTextNodeId(id);
+};
 
   if (isOutlineMode) {
     return (
@@ -2288,7 +2442,7 @@ function CanvasInner() {
             if (createdTextId) setEditingTextNodeId(createdTextId);
             return;
           }
-          if (e.detail === 2 && !isLocked && !isDrawingMode) {
+          if (e.detail === 2 && !isLocked && !isDrawingMode && !isExplorerMode) {
             pushHistorySnapshot();
             const pos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
             const createdId = await createCardOnCanvas({
@@ -2363,7 +2517,9 @@ function CanvasInner() {
           bgColor={theme === 'paper' ? '#FFFFFF' : '#161920'}
           nodeBorderRadius={6}
           nodeColor={(n) =>
-            n.type === 'panoramaSection'
+            n.type === 'hierarchyFolder' || n.type === 'hierarchySlide'
+              ? 'rgba(99, 102, 241, 0.55)'
+              : n.type === 'panoramaSection'
               ? theme === 'paper'
                 ? 'rgba(120, 113, 108, 0.14)'
                 : 'rgba(99, 102, 241, 0.09)'
@@ -3050,6 +3206,59 @@ function CanvasInner() {
                 </div>
               )}
             </div>
+          </Panel>
+        )}
+
+        {/* BARRA DISCRETA DO MODO EXPLORADOR (PASTAS DE DISCIPLINAS / MINI-SLIDES) */}
+        {!zenMode && isExplorerMode && (
+          <Panel position="top-center" className="mt-3">
+            <div className="flex items-center gap-2 rounded-2xl border border-indigo-500/35 bg-[#161920]/95 px-3 py-1.5 text-xs shadow-2xl backdrop-blur-xl">
+              {selectedHierarchyId !== null && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const curr = hierarchy.find((h) => h.id === selectedHierarchyId);
+                    handleOpenFromExplorer(curr?.parentId ?? null);
+                  }}
+                  className="flex items-center gap-1 rounded-lg bg-zinc-800/90 px-2 py-1 text-[11px] font-medium text-zinc-200 transition hover:bg-zinc-700 hover:text-white"
+                  title="Voltar um nível"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" /> Voltar
+                </button>
+              )}
+
+              <span className="font-semibold text-zinc-100">
+                {explorerLayout.mode === 'folders'
+                  ? `Disciplinas (${explorerLayout.folders.filter((f) => !f.isGeneralFallback).length})`
+                  : activeBreadcrumb[activeBreadcrumb.length - 1]?.title ?? 'Assuntos'}
+              </span>
+
+              <span className="h-3.5 w-px bg-zinc-800" />
+
+              <button
+                type="button"
+                onClick={handleOpenDirectMap}
+                className="rounded-lg border border-zinc-800 bg-[#0F1115] px-2.5 py-1 text-[11px] font-medium text-zinc-300 transition hover:border-indigo-500/60 hover:text-indigo-200"
+                title="Abrir o mapa completo direto deste nível"
+              >
+                Mapa Direto
+              </button>
+            </div>
+          </Panel>
+        )}
+
+        {/* BOTÃO DISCRETO PARA VOLTAR ÀS PASTAS / MINI-SLIDES QUANDO EM MAPA DIRETO */}
+        {!zenMode && isForcedDirectMap && (
+          <Panel position="top-left" className="ml-14 mt-3">
+            <button
+              type="button"
+              onClick={() => setDirectMapOverrideKey(null)}
+              className="flex h-9 items-center gap-1.5 rounded-xl border border-indigo-500/40 bg-[#161920]/95 px-3 text-[11px] font-semibold text-indigo-300 shadow-lg backdrop-blur-xl transition hover:bg-indigo-600 hover:text-white"
+              title="Voltar para a visão de Pastas / Mini-Slides"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              {selectedHierarchyId === null ? 'Pastas' : 'Mini-Slides'}
+            </button>
           </Panel>
         )}
 
@@ -4235,17 +4444,19 @@ function CanvasInner() {
         onInsertSvg={insertSvgElementToCanvas}
       />
 
-      <DrawingLayer
-        isActive={isDrawingMode}
-        viewport={liveViewport}
-        screenToFlowPosition={screenToFlowPosition}
-        onBeforeMutate={pushHistorySnapshot}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        onClose={() => setIsDrawingMode(false)}
-      />
+      {!isExplorerMode && (
+        <DrawingLayer
+          isActive={isDrawingMode}
+          viewport={liveViewport}
+          screenToFlowPosition={screenToFlowPosition}
+          onBeforeMutate={pushHistorySnapshot}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onClose={() => setIsDrawingMode(false)}
+        />
+      )}
     </div>
   );
 }

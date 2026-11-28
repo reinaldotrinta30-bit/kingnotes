@@ -59,10 +59,12 @@ import {
 import { useKnowledgeStore } from '../store/useKnowledgeStore';
 import { useUiStore } from '@/domains/ui/store/useUiStore';
 import {
+  CardTitleStyle,
   EmbeddedFlashcard,
   FullKnowledgeCard,
   LocalAttachment,
 } from '../types';
+import { hexToRgbaString } from '@/domains/canvas/utils/contrast';
 import { DEFAULT_CARD_TYPOGRAPHY, resolveCardCallout, resolveCardTitleStyle } from '../utils/defaults';
 import { getHierarchyBreadcrumb } from '../utils/hierarchyContext';
 import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryFactory';
@@ -269,6 +271,7 @@ export function KnowledgeCardEditorPane({
   const dockToolbarInHeader = isExpanded && !isSplitActive && isWideHeader && slot === 'primary';
 
   // Estado explícito de rascunho + indicador de alterações não salvas
+  const [activeField, setActiveField] = useState<'title' | 'body'>('body');
   const [titleDraft, setTitleDraft] = useState(fullCard.meta.title);
   const [isDirty, setIsDirty] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<number>(fullCard.meta.updatedAt);
@@ -508,6 +511,9 @@ export function KnowledgeCardEditorPane({
         return false;
       },
     },
+    onFocus: () => {
+      setActiveField('body');
+    },
     onUpdate: ({ editor: ed }) => {
       const { $from, empty } = ed.state.selection;
       if (empty) {
@@ -618,6 +624,20 @@ export function KnowledgeCardEditorPane({
   const typoStyle = buildTypographyCssVars(fullCard.meta.typography, DEFAULT_CARD_TYPOGRAPHY);
   const callout = resolveCardCallout(fullCard.meta);
   const titleStyle = resolveCardTitleStyle(fullCard.meta);
+  const isEditingTitle = activeField === 'title';
+
+  const patchTitleStyle = (patch: Partial<CardTitleStyle>) => {
+    updateCardMeta(fullCard.meta.id, {
+      titleStyle: {
+        ...titleStyle,
+        color: titleStyle.color || undefined,
+        bgColor: titleStyle.bgColor || undefined,
+        underlineColor: titleStyle.underlineColor || undefined,
+        highlightColor: titleStyle.highlightColor || undefined,
+        ...patch,
+      },
+    });
+  };
   const titleProps = buildCardTitleRenderProps(titleStyle, {
     fontSizeOverride: Math.max(22, Math.round(titleStyle.fontSize * 1.45)),
   });
@@ -790,34 +810,124 @@ export function KnowledgeCardEditorPane({
 
         <div className="mx-1 h-4 w-px shrink-0 bg-zinc-800" />
 
-        <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={iconBtn(editor.isActive('bold'))} title="Negrito (Ctrl+B)"><Bold className="h-3.5 w-3.5" /></button>
-        <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={iconBtn(editor.isActive('italic'))} title="Itálico (Ctrl+I)"><Italic className="h-3.5 w-3.5" /></button>
-        <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={iconBtn(editor.isActive('underline'))} title="Sublinhado (Ctrl+U)"><UnderlineIcon className="h-3.5 w-3.5" /></button>
-        <StudyUnderlinePicker editor={editor} />
-        <StudyFontPicker editor={editor} />
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            if (isEditingTitle) {
+              patchTitleStyle({ fontWeight: titleStyle.fontWeight === 'bold' ? 'normal' : 'bold' });
+            } else {
+              editor.chain().focus().toggleBold().run();
+            }
+          }}
+          className={iconBtn(isEditingTitle ? titleStyle.fontWeight === 'bold' : editor.isActive('bold'))}
+          title="Negrito (Ctrl+B)"
+        >
+          <Bold className="h-3.5 w-3.5" />
+        </button>
+
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            if (isEditingTitle) patchTitleStyle({ italic: !titleStyle.italic });
+            else editor.chain().focus().toggleItalic().run();
+          }}
+          className={iconBtn(isEditingTitle ? titleStyle.italic : editor.isActive('italic'))}
+          title="Itálico (Ctrl+I)"
+        >
+          <Italic className="h-3.5 w-3.5" />
+        </button>
+
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            if (isEditingTitle) patchTitleStyle({ underline: !titleStyle.underline });
+            else editor.chain().focus().toggleUnderline().run();
+          }}
+          className={iconBtn(isEditingTitle ? titleStyle.underline : editor.isActive('underline'))}
+          title="Sublinhado (Ctrl+U)"
+        >
+          <UnderlineIcon className="h-3.5 w-3.5" />
+        </button>
+
+        {isEditingTitle ? (
+          <StudyUnderlinePicker
+            active={titleStyle.underline && titleStyle.underlineStyle !== 'solid'}
+            valueVariant={
+              titleStyle.underlineStyle !== 'solid' ? titleStyle.underlineStyle : 'brush'
+            }
+            valueColor={titleStyle.underlineColor || undefined}
+            onApplyStyle={(variant, color) =>
+              patchTitleStyle({ underline: true, underlineStyle: variant, underlineColor: color })
+            }
+            onClearStyle={() =>
+              patchTitleStyle({ underline: false, underlineStyle: 'solid', underlineColor: undefined })
+            }
+          />
+        ) : (
+          <StudyUnderlinePicker editor={editor} />
+        )}
+
+        {isEditingTitle ? (
+          <StudyFontPicker
+            valueFontId={titleStyle.fontFamily}
+            onSelectFont={(fontFamily) => patchTitleStyle({ fontFamily })}
+          />
+        ) : (
+          <StudyFontPicker editor={editor} />
+        )}
 
         {/* Cor do texto */}
-        <div className="relative">
-          <button type="button" onClick={() => setOpenMenu(openMenu === 'color' ? null : 'color')} className={iconBtn(openMenu === 'color')} title="Cor do texto">
+        <div className="relative" onMouseDown={(e) => e.preventDefault()}>
+          <button
+            type="button"
+            onClick={() => setOpenMenu(openMenu === 'color' ? null : 'color')}
+            className={iconBtn(openMenu === 'color')}
+            title="Cor do texto"
+          >
             <Palette className="h-3.5 w-3.5" />
           </button>
           {openMenu === 'color' && (
             <div className="absolute left-0 top-full z-50 mt-2 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
               {TEXT_COLORS.map((hex) => (
-                <button key={hex} type="button" onClick={() => { editor.chain().focus().setColor(hex).run(); setOpenMenu(null); }} className="h-4 w-4 rounded-full border border-zinc-700 hover:scale-125" style={{ backgroundColor: hex }} />
+                <button
+                  key={hex}
+                  type="button"
+                  onClick={() => {
+                    if (isEditingTitle) patchTitleStyle({ color: hex });
+                    else editor.chain().focus().setColor(hex).run();
+                    setOpenMenu(null);
+                  }}
+                  className="h-4 w-4 rounded-full border border-zinc-700 hover:scale-125"
+                  style={{ backgroundColor: hex }}
+                />
               ))}
-              <button type="button" onClick={() => { editor.chain().focus().unsetColor().run(); setOpenMenu(null); }} className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">Reset</button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isEditingTitle) patchTitleStyle({ color: undefined });
+                  else editor.chain().focus().unsetColor().run();
+                  setOpenMenu(null);
+                }}
+                className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300"
+              >
+                Reset
+              </button>
             </div>
           )}
         </div>
 
         {/* Marca-texto */}
-        <div className="relative">
+        <div className="relative" onMouseDown={(e) => e.preventDefault()}>
           <button
             type="button"
             onClick={() => setOpenMenu(openMenu === 'highlight' ? null : 'highlight')}
             className={`rounded-lg p-1.5 transition ${
-              editor.isActive('highlight') ? 'bg-amber-500/20 text-amber-300' : 'text-amber-300 hover:bg-zinc-800'
+              (isEditingTitle ? Boolean(titleStyle.highlightColor) : editor.isActive('highlight'))
+                ? 'bg-amber-500/20 text-amber-300'
+                : 'text-amber-300 hover:bg-zinc-800'
             }`}
             title="Marca-texto"
           >
@@ -826,9 +936,29 @@ export function KnowledgeCardEditorPane({
           {openMenu === 'highlight' && (
             <div className="absolute left-0 top-full z-50 mt-2 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
               {HIGHLIGHT_COLORS.map((hex) => (
-                <button key={hex} type="button" onClick={() => { editor.chain().focus().toggleHighlight({ color: hex }).run(); setOpenMenu(null); }} className="h-4 w-4 rounded border border-zinc-700 hover:scale-125" style={{ backgroundColor: hex }} />
+                <button
+                  key={hex}
+                  type="button"
+                  onClick={() => {
+                    if (isEditingTitle) patchTitleStyle({ highlightColor: hexToRgbaString(hex, 0.36) });
+                    else editor.chain().focus().toggleHighlight({ color: hex }).run();
+                    setOpenMenu(null);
+                  }}
+                  className="h-4 w-4 rounded border border-zinc-700 hover:scale-125"
+                  style={{ backgroundColor: hex }}
+                />
               ))}
-              <button type="button" onClick={() => { editor.chain().focus().unsetHighlight().run(); setOpenMenu(null); }} className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">Limpar</button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isEditingTitle) patchTitleStyle({ highlightColor: undefined });
+                  else editor.chain().focus().unsetHighlight().run();
+                  setOpenMenu(null);
+                }}
+                className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300"
+              >
+                Limpar
+              </button>
             </div>
           )}
         </div>
@@ -850,9 +980,9 @@ export function KnowledgeCardEditorPane({
 
         <div className="mx-1 h-4 w-px shrink-0 bg-zinc-800" />
 
-        <button type="button" onClick={() => editor.chain().focus().setTextAlign('left').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Alinhar à esquerda"><AlignLeft className="h-3.5 w-3.5" /></button>
-        <button type="button" onClick={() => editor.chain().focus().setTextAlign('center').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Centralizar"><AlignCenter className="h-3.5 w-3.5" /></button>
-        <button type="button" onClick={() => editor.chain().focus().setTextAlign('right').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Alinhar à direita"><AlignRight className="h-3.5 w-3.5" /></button>
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => isEditingTitle ? patchTitleStyle({ textAlign: 'left' }) : editor.chain().focus().setTextAlign('left').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Alinhar à esquerda"><AlignLeft className="h-3.5 w-3.5" /></button>
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => isEditingTitle ? patchTitleStyle({ textAlign: 'center' }) : editor.chain().focus().setTextAlign('center').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Centralizar"><AlignCenter className="h-3.5 w-3.5" /></button>
+        <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => isEditingTitle ? patchTitleStyle({ textAlign: 'right' }) : editor.chain().focus().setTextAlign('right').run()} className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100" title="Alinhar à direita"><AlignRight className="h-3.5 w-3.5" /></button>
 
         <div className="mx-1 h-4 w-px shrink-0 bg-zinc-800" />
 
@@ -933,6 +1063,7 @@ export function KnowledgeCardEditorPane({
             <div style={titleProps.wrapperStyle} className={`mb-3 w-full ${titleProps.wrapperClassName}`}>
               <input
                 value={titleDraft}
+                onFocus={() => setActiveField('title')}
                 onChange={(e) => {
                   setTitleDraft(e.target.value);
                   scheduleAutoSave();

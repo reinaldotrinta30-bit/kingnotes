@@ -19,6 +19,7 @@ import {
   TEXT_EFFECT_OPTIONS,
 } from '../utils/studyFonts';
 import { CardTitleStyleControls } from './CardTitleStyleControls';
+import { SmartFloatingPopover } from './SmartFloatingPopover';
 
 interface TypographyPopoverProps {
   value?: TextTypographyConfig;
@@ -29,6 +30,7 @@ interface TypographyPopoverProps {
   titleStyle?: CardTitleStyle;
   onTitleStyleChange?: (next: CardTitleStyle) => void;
   onTitleStyleReset?: () => void;
+  defaultTab?: 'title' | 'body';
   singleTitleMode?: boolean;
   hideBannerBg?: boolean;
   hideSpacingControls?: boolean;
@@ -45,6 +47,7 @@ export function TypographyPopover({
   titleStyle,
   onTitleStyleChange,
   onTitleStyleReset,
+  defaultTab,
   singleTitleMode = false,
   hideBannerBg = false,
   hideSpacingControls = false,
@@ -52,15 +55,22 @@ export function TypographyPopover({
   compact = false,
 }: TypographyPopoverProps) {
   const [open, setOpen] = useState(false);
-  const [targetTab, setTargetTab] = useState<'body' | 'title'>('title');
-  const rootRef = useRef<HTMLDivElement>(null);
+  const [targetTab, setTargetTab] = useState<'body' | 'title'>(defaultTab ?? 'title');
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (open && defaultTab) {
+      setTargetTab(defaultTab);
+    }
+  }, [open, defaultTab]);
 
   const supportsTitleTab = Boolean(onTitleStyleChange) && !singleTitleMode;
-  const effectiveTab = singleTitleMode && onTitleStyleChange
-    ? 'title'
-    : supportsTitleTab
-    ? targetTab
-    : 'body';
+  const effectiveTab =
+    singleTitleMode && onTitleStyleChange
+      ? 'title'
+      : supportsTitleTab
+      ? targetTab
+      : 'body';
   const current = resolveTypography(value, defaults, legacyFontSize);
 
   const isBodyCustomized =
@@ -72,33 +82,25 @@ export function TypographyPopover({
 
   const isTitleCustomized = Boolean(titleStyle && Object.keys(titleStyle).length > 0);
 
-  const displayFontId = singleTitleMode
-    ? titleStyle?.fontFamily ?? current.fontFamily
-    : current.fontFamily;
-  const displayFontSize = singleTitleMode
-    ? titleStyle?.fontSize ?? current.fontSize
-    : current.fontSize;
+  const displayFontId =
+    singleTitleMode || defaultTab === 'title'
+      ? titleStyle?.fontFamily ?? current.fontFamily
+      : current.fontFamily;
+  const displayFontSize =
+    singleTitleMode || defaultTab === 'title'
+      ? titleStyle?.fontSize ?? current.fontSize
+      : current.fontSize;
   const activeFontLabel =
     STUDY_FONT_OPTIONS.find((f) => f.id === displayFontId)?.label ?? 'Padrão';
-
-  useEffect(() => {
-    if (!open) return;
-    const handleOutside = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleOutside);
-    return () => document.removeEventListener('mousedown', handleOutside);
-  }, [open]);
 
   const updateBodyField = (patch: Partial<TextTypographyConfig>) => {
     onChange(resolveTypography({ ...current, ...patch }, defaults));
   };
 
   return (
-    <div ref={rootRef} className="relative" onClick={(e) => e.stopPropagation()}>
+    <div className="relative" onClick={(e) => e.stopPropagation()}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={`flex items-center gap-1.5 rounded-lg border transition ${
@@ -117,221 +119,223 @@ export function TypographyPopover({
         <span className="font-mono text-[10.5px]">{displayFontSize}px</span>
       </button>
 
-      {open && (
-        <div
-          onMouseDown={(e) => e.stopPropagation()}
-          className={`kc-no-scrollbar absolute top-full z-[150] mt-2 max-h-[76vh] w-80 space-y-3.5 overflow-y-auto rounded-2xl border border-zinc-800 bg-[#161920]/98 p-4 text-left shadow-2xl backdrop-blur-xl ${
-            align === 'right' ? 'right-0' : 'left-0'
-          }`}
-        >
-          <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2.5">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-200">
-              Fonte & Lettering
-            </span>
+      <SmartFloatingPopover
+        open={open}
+        anchorRef={triggerRef}
+        onClose={() => setOpen(false)}
+        width={324}
+        estimatedHeight={520}
+        align={align}
+        preferSideWhenCramped
+        className="space-y-3.5 rounded-2xl border border-zinc-800 bg-[#161920]/98 p-4 text-left shadow-2xl backdrop-blur-xl"
+      >
+        <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-200">
+            Fonte & Lettering
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              if (effectiveTab === 'title' && onTitleStyleReset) onTitleStyleReset();
+              else onReset();
+            }}
+            disabled={effectiveTab === 'title' ? !isTitleCustomized : !isBodyCustomized}
+            className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-35"
+            title="Restaurar padrão"
+          >
+            <RotateCcw className="h-3 w-3" /> Padrão
+          </button>
+        </div>
+
+        {supportsTitleTab && (
+          <div className="grid grid-cols-2 gap-1 rounded-xl border border-zinc-800 bg-[#0F1115] p-1">
             <button
               type="button"
-              onClick={() => {
-                if (effectiveTab === 'title' && onTitleStyleReset) onTitleStyleReset();
-                else onReset();
-              }}
-              disabled={effectiveTab === 'title' ? !isTitleCustomized : !isBodyCustomized}
-              className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10.5px] text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-35"
-              title="Restaurar padrão"
+              onClick={() => setTargetTab('title')}
+              className={`rounded-lg py-1.5 text-[11px] font-semibold transition ${
+                effectiveTab === 'title'
+                  ? 'bg-indigo-600/25 text-indigo-200'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
             >
-              <RotateCcw className="h-3 w-3" /> Padrão
+              Título do Card
+            </button>
+            <button
+              type="button"
+              onClick={() => setTargetTab('body')}
+              className={`rounded-lg py-1.5 text-[11px] font-semibold transition ${
+                effectiveTab === 'body'
+                  ? 'bg-indigo-600/25 text-indigo-200'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              Corpo do Texto
             </button>
           </div>
+        )}
 
-          {supportsTitleTab && (
-            <div className="grid grid-cols-2 gap-1 rounded-xl border border-zinc-800 bg-[#0F1115] p-1">
-              <button
-                type="button"
-                onClick={() => setTargetTab('title')}
-                className={`rounded-lg py-1.5 text-[11px] font-semibold transition ${
-                  effectiveTab === 'title'
-                    ? 'bg-indigo-600/25 text-indigo-200'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                Título do Card
-              </button>
-              <button
-                type="button"
-                onClick={() => setTargetTab('body')}
-                className={`rounded-lg py-1.5 text-[11px] font-semibold transition ${
-                  effectiveTab === 'body'
-                    ? 'bg-indigo-600/25 text-indigo-200'
-                    : 'text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                Corpo do Texto
-              </button>
+        {effectiveTab === 'title' && onTitleStyleChange ? (
+          <CardTitleStyleControls
+            value={titleStyle}
+            fallbackTypography={value}
+            onChange={onTitleStyleChange}
+            hideBannerBg={hideBannerBg}
+          />
+        ) : (
+          <div className="space-y-3.5">
+            <div className="space-y-1.5">
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                Estilo de Fonte
+              </span>
+              <div className="grid grid-cols-3 gap-1.5">
+                {STUDY_FONT_OPTIONS.map((font) => (
+                  <button
+                    key={font.id}
+                    type="button"
+                    onClick={() => updateBodyField({ fontFamily: font.id as StudyFontId })}
+                    style={{ fontFamily: font.cssFamily }}
+                    className={`rounded-lg border px-2 py-1.5 text-xs transition ${
+                      current.fontFamily === font.id
+                        ? 'border-indigo-500 bg-indigo-600/20 text-indigo-100'
+                        : 'border-zinc-800 bg-[#0F1115] text-zinc-300 hover:border-zinc-700 hover:text-white'
+                    }`}
+                  >
+                    {font.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          )}
 
-          {effectiveTab === 'title' && onTitleStyleChange ? (
-            <CardTitleStyleControls
-              value={titleStyle}
-              fallbackTypography={value}
-              onChange={onTitleStyleChange}
-              hideBannerBg={hideBannerBg}
-            />
-          ) : (
-            <div className="space-y-3.5">
-              <div className="space-y-1.5">
-                <span className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                  Estilo de Fonte
-                </span>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {STUDY_FONT_OPTIONS.map((font) => (
-                    <button
-                      key={font.id}
-                      type="button"
-                      onClick={() => updateBodyField({ fontFamily: font.id as StudyFontId })}
-                      style={{ fontFamily: font.cssFamily }}
-                      className={`rounded-lg border px-2 py-1.5 text-xs transition ${
-                        current.fontFamily === font.id
-                          ? 'border-indigo-500 bg-indigo-600/20 text-indigo-100'
-                          : 'border-zinc-800 bg-[#0F1115] text-zinc-300 hover:border-zinc-700 hover:text-white'
-                      }`}
-                    >
-                      {font.label}
-                    </button>
-                  ))}
-                </div>
+            <div className="space-y-1.5">
+              <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                <Sparkles className="h-3 w-3 text-amber-400" /> Efeito Lettering
+              </span>
+              <div className="grid grid-cols-3 gap-1.5">
+                {TEXT_EFFECT_OPTIONS.map((fx) => (
+                  <button
+                    key={fx.id}
+                    type="button"
+                    onClick={() => updateBodyField({ textEffect: fx.id as TextEffectId })}
+                    className={`rounded-lg border px-2 py-1 text-[11px] font-medium transition ${
+                      current.textEffect === fx.id
+                        ? 'border-amber-500/70 bg-amber-500/15 text-amber-200'
+                        : 'border-zinc-800 bg-[#0F1115] text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {fx.label}
+                  </button>
+                ))}
               </div>
 
-              <div className="space-y-1.5">
-                <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                  <Sparkles className="h-3 w-3 text-amber-400" /> Efeito Lettering
-                </span>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {TEXT_EFFECT_OPTIONS.map((fx) => (
-                    <button
-                      key={fx.id}
-                      type="button"
-                      onClick={() => updateBodyField({ textEffect: fx.id as TextEffectId })}
-                      className={`rounded-lg border px-2 py-1 text-[11px] font-medium transition ${
-                        current.textEffect === fx.id
-                          ? 'border-amber-500/70 bg-amber-500/15 text-amber-200'
-                          : 'border-zinc-800 bg-[#0F1115] text-zinc-400 hover:text-zinc-200'
-                      }`}
-                    >
-                      {fx.label}
-                    </button>
-                  ))}
-                </div>
-
-                {current.textEffect !== 'none' && (
-                  <div className="flex items-center justify-between gap-1.5 rounded-xl border border-zinc-800 bg-[#0F1115] px-2.5 py-1.5">
-                    <span className="text-[10px] text-zinc-500">Cor efeito</span>
-                    <div className="flex items-center gap-1">
-                      {EFFECT_COLOR_SWATCHES.map((sw) => (
-                        <button
-                          key={sw.hex}
-                          type="button"
-                          title={sw.label}
-                          onClick={() => updateBodyField({ effectColor: sw.hex })}
-                          className={`h-4 w-4 rounded-full border transition hover:scale-125 ${
-                            current.effectColor === sw.hex
-                              ? 'scale-110 border-white'
-                              : 'border-zinc-700'
-                          }`}
-                          style={{ backgroundColor: sw.hex }}
-                        />
-                      ))}
-                      <input
-                        type="color"
-                        value={current.effectColor}
-                        onChange={(e) => updateBodyField({ effectColor: e.target.value })}
-                        className="h-4 w-4 cursor-pointer rounded border-0 bg-transparent p-0"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="h-px bg-zinc-800/80" />
-
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-zinc-400">Tamanho da fonte</span>
+              {current.textEffect !== 'none' && (
+                <div className="flex items-center justify-between gap-1.5 rounded-xl border border-zinc-800 bg-[#0F1115] px-2.5 py-1.5">
+                  <span className="text-[10px] text-zinc-500">Cor efeito</span>
                   <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => updateBodyField({ fontSize: current.fontSize - 1 })}
-                      className="rounded bg-zinc-800/90 p-0.5 text-zinc-300 hover:bg-zinc-700"
-                    >
-                      <Minus className="h-3 w-3" />
-                    </button>
-                    <span className="w-10 text-center font-mono text-[11px] font-semibold text-zinc-100">
-                      {current.fontSize}px
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => updateBodyField({ fontSize: current.fontSize + 1 })}
-                      className="rounded bg-zinc-800/90 p-0.5 text-zinc-300 hover:bg-zinc-700"
-                    >
-                      <Plus className="h-3 w-3" />
-                    </button>
+                    {EFFECT_COLOR_SWATCHES.map((sw) => (
+                      <button
+                        key={sw.hex}
+                        type="button"
+                        title={sw.label}
+                        onClick={() => updateBodyField({ effectColor: sw.hex })}
+                        className={`h-4 w-4 rounded-full border transition hover:scale-125 ${
+                          current.effectColor === sw.hex
+                            ? 'scale-110 border-white'
+                            : 'border-zinc-700'
+                        }`}
+                        style={{ backgroundColor: sw.hex }}
+                      />
+                    ))}
+                    <input
+                      type="color"
+                      value={current.effectColor}
+                      onChange={(e) => updateBodyField({ effectColor: e.target.value })}
+                      className="h-4 w-4 cursor-pointer rounded border-0 bg-transparent p-0"
+                    />
                   </div>
                 </div>
-                <input
-                  type="range"
-                  min={TYPOGRAPHY_LIMITS.fontSize.min}
-                  max={TYPOGRAPHY_LIMITS.fontSize.max}
-                  step={1}
-                  value={current.fontSize}
-                  onChange={(e) => updateBodyField({ fontSize: Number(e.target.value) })}
-                  className="w-full accent-indigo-500"
-                />
-              </div>
-
-              {!hideSpacingControls && (
-                <>
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-zinc-400">Espaço entre linhas</span>
-                      <span className="font-mono text-[11px] font-semibold text-zinc-100">
-                        {current.lineHeight.toFixed(2)}×
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min={TYPOGRAPHY_LIMITS.lineHeight.min}
-                      max={TYPOGRAPHY_LIMITS.lineHeight.max}
-                      step={0.05}
-                      value={current.lineHeight}
-                      onChange={(e) => updateBodyField({ lineHeight: Number(e.target.value) })}
-                      className="w-full accent-indigo-500"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-zinc-400">Espaço entre parágrafos</span>
-                      <span className="font-mono text-[11px] font-semibold text-zinc-100">
-                        {current.paragraphSpacing}px
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min={TYPOGRAPHY_LIMITS.paragraphSpacing.min}
-                      max={TYPOGRAPHY_LIMITS.paragraphSpacing.max}
-                      step={1}
-                      value={current.paragraphSpacing}
-                      onChange={(e) =>
-                        updateBodyField({ paragraphSpacing: Number(e.target.value) })
-                      }
-                      className="w-full accent-indigo-500"
-                    />
-                  </div>
-                </>
               )}
             </div>
-          )}
-        </div>
-      )}
+
+            <div className="h-px bg-zinc-800/80" />
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-zinc-400">Tamanho da fonte</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => updateBodyField({ fontSize: current.fontSize - 1 })}
+                    className="rounded bg-zinc-800/90 p-0.5 text-zinc-300 hover:bg-zinc-700"
+                  >
+                    <Minus className="h-3 w-3" />
+                  </button>
+                  <span className="w-10 text-center font-mono text-[11px] font-semibold text-zinc-100">
+                    {current.fontSize}px
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => updateBodyField({ fontSize: current.fontSize + 1 })}
+                    className="rounded bg-zinc-800/90 p-0.5 text-zinc-300 hover:bg-zinc-700"
+                  >
+                    <Plus className="h-3 w-3" />
+                  </button>
+                </div>
+              </div>
+              <input
+                type="range"
+                min={TYPOGRAPHY_LIMITS.fontSize.min}
+                max={TYPOGRAPHY_LIMITS.fontSize.max}
+                step={1}
+                value={current.fontSize}
+                onChange={(e) => updateBodyField({ fontSize: Number(e.target.value) })}
+                className="w-full accent-indigo-500"
+              />
+            </div>
+
+            {!hideSpacingControls && (
+              <>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-zinc-400">Espaço entre linhas</span>
+                    <span className="font-mono text-[11px] font-semibold text-zinc-100">
+                      {current.lineHeight.toFixed(2)}×
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={TYPOGRAPHY_LIMITS.lineHeight.min}
+                    max={TYPOGRAPHY_LIMITS.lineHeight.max}
+                    step={0.05}
+                    value={current.lineHeight}
+                    onChange={(e) => updateBodyField({ lineHeight: Number(e.target.value) })}
+                    className="w-full accent-indigo-500"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="text-zinc-400">Espaço entre parágrafos</span>
+                    <span className="font-mono text-[11px] font-semibold text-zinc-100">
+                      {current.paragraphSpacing}px
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={TYPOGRAPHY_LIMITS.paragraphSpacing.min}
+                    max={TYPOGRAPHY_LIMITS.paragraphSpacing.max}
+                    step={1}
+                    value={current.paragraphSpacing}
+                    onChange={(e) =>
+                      updateBodyField({ paragraphSpacing: Number(e.target.value) })
+                    }
+                    className="w-full accent-indigo-500"
+                  />
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </SmartFloatingPopover>
     </div>
   );
 }

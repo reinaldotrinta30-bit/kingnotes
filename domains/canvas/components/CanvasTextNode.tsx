@@ -37,6 +37,7 @@ import { useUiStore } from '@/domains/ui/store/useUiStore';
 import { StudyTapeMark } from '@/domains/knowledge/extensions/StudyTapeMark';
 import { RichDocRenderer, buildTypographyCssVars } from './CardRichPreview';
 import { TypographyPopover } from './TypographyPopover';
+import { SmartFloatingPopover } from './SmartFloatingPopover';
 import { CalloutBadge } from './CalloutBadge';
 
 const HANDLES = [
@@ -111,6 +112,8 @@ function FreeTextInlineEditor({
   onDone,
 }: FreeTextInlineEditorProps) {
   const [openPicker, setOpenPicker] = useState<'color' | 'highlight' | null>(null);
+  const colorBtnRef = useRef<HTMLButtonElement>(null);
+  const highlightBtnRef = useRef<HTMLButtonElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
@@ -243,6 +246,7 @@ function FreeTextInlineEditor({
         {/* Cor do Texto */}
         <div className="relative">
           <button
+            ref={colorBtnRef}
             type="button"
             onClick={() => setOpenPicker(openPicker === 'color' ? null : 'color')}
             className={btn(openPicker === 'color')}
@@ -250,31 +254,36 @@ function FreeTextInlineEditor({
           >
             <Palette className="h-3.5 w-3.5 text-sky-400" />
           </button>
-          {openPicker === 'color' && (
-            <div className="absolute left-0 top-full z-50 mt-1.5 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
-              {INLINE_TEXT_COLORS.map((c) => (
-                <button
-                  key={c.label}
-                  type="button"
-                  title={c.label}
-                  onClick={() => {
-                    if (c.value) editor.chain().focus().setColor(c.value).run();
-                    else editor.chain().focus().unsetColor().run();
-                    setOpenPicker(null);
-                  }}
-                  className="flex h-5 w-5 items-center justify-center rounded-full border border-zinc-700 text-[9px] font-bold text-zinc-400 transition hover:scale-110"
-                  style={c.value ? { backgroundColor: c.value } : undefined}
-                >
-                  {!c.value && '✕'}
-                </button>
-              ))}
-            </div>
-          )}
+          <SmartFloatingPopover
+            open={openPicker === 'color'}
+            anchorRef={colorBtnRef}
+            onClose={() => setOpenPicker(null)}
+            estimatedHeight={52}
+            className="flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920]/98 p-2 shadow-2xl backdrop-blur-xl"
+          >
+            {INLINE_TEXT_COLORS.map((c) => (
+              <button
+                key={c.label}
+                type="button"
+                title={c.label}
+                onClick={() => {
+                  if (c.value) editor.chain().focus().setColor(c.value).run();
+                  else editor.chain().focus().unsetColor().run();
+                  setOpenPicker(null);
+                }}
+                className="flex h-5 w-5 items-center justify-center rounded-full border border-zinc-700 text-[9px] font-bold text-zinc-400 transition hover:scale-110"
+                style={c.value ? { backgroundColor: c.value } : undefined}
+              >
+                {!c.value && '✕'}
+              </button>
+            ))}
+          </SmartFloatingPopover>
         </div>
 
         {/* Marca-Texto */}
         <div className="relative">
           <button
+            ref={highlightBtnRef}
             type="button"
             onClick={() => setOpenPicker(openPicker === 'highlight' ? null : 'highlight')}
             className={btn(editor.isActive('highlight') || openPicker === 'highlight')}
@@ -282,26 +291,30 @@ function FreeTextInlineEditor({
           >
             <Highlighter className="h-3.5 w-3.5 text-amber-400" />
           </button>
-          {openPicker === 'highlight' && (
-            <div className="absolute left-0 top-full z-50 mt-1.5 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
-              {HIGHLIGHT_COLORS.map((c) => (
-                <button
-                  key={c.label}
-                  type="button"
-                  title={c.label}
-                  onClick={() => {
-                    if (c.value) editor.chain().focus().setHighlight({ color: c.value }).run();
-                    else editor.chain().focus().unsetHighlight().run();
-                    setOpenPicker(null);
-                  }}
-                  className="flex h-5 w-5 items-center justify-center rounded-md border border-zinc-700 text-[9px] font-bold text-zinc-400 transition hover:scale-110"
-                  style={c.value ? { backgroundColor: c.value } : undefined}
-                >
-                  {!c.value && '✕'}
-                </button>
-              ))}
-            </div>
-          )}
+          <SmartFloatingPopover
+            open={openPicker === 'highlight'}
+            anchorRef={highlightBtnRef}
+            onClose={() => setOpenPicker(null)}
+            estimatedHeight={52}
+            className="flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920]/98 p-2 shadow-2xl backdrop-blur-xl"
+          >
+            {HIGHLIGHT_COLORS.map((c) => (
+              <button
+                key={c.label}
+                type="button"
+                title={c.label}
+                onClick={() => {
+                  if (c.value) editor.chain().focus().setHighlight({ color: c.value }).run();
+                  else editor.chain().focus().unsetHighlight().run();
+                  setOpenPicker(null);
+                }}
+                className="flex h-5 w-5 items-center justify-center rounded-md border border-zinc-700 text-[9px] font-bold text-zinc-400 transition hover:scale-110"
+                style={c.value ? { backgroundColor: c.value } : undefined}
+              >
+                {!c.value && '✕'}
+              </button>
+            ))}
+          </SmartFloatingPopover>
         </div>
 
         <button

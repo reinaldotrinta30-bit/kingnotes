@@ -28,6 +28,7 @@ import { buildCardTitleRenderProps } from '../utils/cardTitleStyle';
 import { TypographyPopover } from './TypographyPopover';
 import { StudyUnderlinePicker } from './StudyUnderlinePicker';
 import { StudyFontPicker } from './StudyFontPicker';
+import { SmartFloatingPopover } from './SmartFloatingPopover';
 
 const HANDLES = [
   { pos: Position.Top, id: 'top' },
@@ -108,6 +109,8 @@ export const CanvasTopicNode = memo(function CanvasTopicNode({
 
   const [draft, setDraft] = useState(node.label ?? 'Novo Tópico');
   const [openPicker, setOpenPicker] = useState<null | 'color' | 'highlight'>(null);
+  const highlightBtnRef = useRef<HTMLButtonElement>(null);
+  const colorBtnRef = useRef<HTMLButtonElement>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef(draft);
@@ -892,6 +895,7 @@ export const CanvasTopicNode = memo(function CanvasTopicNode({
           {/* Marca-texto */}
           <div className="relative">
             <button
+              ref={highlightBtnRef}
               type="button"
               onClick={() => setOpenPicker(openPicker === 'highlight' ? null : 'highlight')}
               className={`rounded-lg p-1.5 transition ${
@@ -903,34 +907,39 @@ export const CanvasTopicNode = memo(function CanvasTopicNode({
             >
               <Highlighter className="h-3.5 w-3.5" />
             </button>
-            {openPicker === 'highlight' && (
-              <div className="absolute left-0 top-full z-[150] mt-2 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
-                {TOPIC_HIGHLIGHT_COLORS.map((c) => (
-                  <button
-                    key={`thl-${c.label}`}
-                    type="button"
-                    title={c.label}
-                    onClick={() => {
-                      applyTopicTextStyle({ highlightColor: c.value || undefined });
-                      setOpenPicker(null);
-                    }}
-                    className={`flex h-5 w-5 items-center justify-center rounded-md border text-[9px] font-bold text-zinc-400 transition hover:scale-110 ${
-                      resolvedTextStyle.highlightColor === c.value
-                        ? 'scale-110 border-white'
-                        : 'border-zinc-700'
-                    }`}
-                    style={c.value ? { backgroundColor: c.value } : undefined}
-                  >
-                    {!c.value && '✕'}
-                  </button>
-                ))}
-              </div>
-            )}
+            <SmartFloatingPopover
+              open={openPicker === 'highlight'}
+              anchorRef={highlightBtnRef}
+              onClose={() => setOpenPicker(null)}
+              estimatedHeight={52}
+              className="flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920]/98 p-2 shadow-2xl backdrop-blur-xl"
+            >
+              {TOPIC_HIGHLIGHT_COLORS.map((c) => (
+                <button
+                  key={`thl-${c.label}`}
+                  type="button"
+                  title={c.label}
+                  onClick={() => {
+                    applyTopicTextStyle({ highlightColor: c.value || undefined });
+                    setOpenPicker(null);
+                  }}
+                  className={`flex h-5 w-5 items-center justify-center rounded-md border text-[9px] font-bold text-zinc-400 transition hover:scale-110 ${
+                    resolvedTextStyle.highlightColor === c.value
+                      ? 'scale-110 border-white'
+                      : 'border-zinc-700'
+                  }`}
+                  style={c.value ? { backgroundColor: c.value } : undefined}
+                >
+                  {!c.value && '✕'}
+                </button>
+              ))}
+            </SmartFloatingPopover>
           </div>
 
           {/* Cor do texto */}
           <div className="relative">
             <button
+              ref={colorBtnRef}
               type="button"
               onClick={() => setOpenPicker(openPicker === 'color' ? null : 'color')}
               className={`rounded-lg p-1.5 transition ${
@@ -942,34 +951,38 @@ export const CanvasTopicNode = memo(function CanvasTopicNode({
             >
               <Palette className="h-3.5 w-3.5" />
             </button>
-            {openPicker === 'color' && (
-              <div className="absolute left-0 top-full z-[150] mt-2 flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
-                {QUICK_TOPIC_TEXT_COLORS.map((hex) => (
-                  <button
-                    key={`ttc-${hex || 'auto'}`}
-                    type="button"
-                    onClick={() => {
-                      applyTopicTextStyle({ color: hex || undefined });
-                      setOpenPicker(null);
-                    }}
-                    className={`flex h-4 w-4 items-center justify-center rounded-full border text-[8px] font-bold text-zinc-400 transition hover:scale-125 ${
-                      resolvedTextStyle.color === hex ? 'scale-110 border-white' : 'border-zinc-700'
-                    }`}
-                    style={hex ? { backgroundColor: hex } : undefined}
-                    title={hex ? `Cor ${hex}` : 'Cor automática'}
-                  >
-                    {!hex && 'A'}
-                  </button>
-                ))}
-                <input
-                  type="color"
-                  value={effectiveTextColor}
-                  onChange={(e) => applyTopicTextStyle({ color: e.target.value })}
-                  className="h-4 w-4 cursor-pointer rounded border-0 bg-transparent p-0"
-                  title="Cor personalizada"
-                />
-              </div>
-            )}
+            <SmartFloatingPopover
+              open={openPicker === 'color'}
+              anchorRef={colorBtnRef}
+              onClose={() => setOpenPicker(null)}
+              estimatedHeight={52}
+              className="flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920]/98 p-2 shadow-2xl backdrop-blur-xl"
+            >
+              {QUICK_TOPIC_TEXT_COLORS.map((hex) => (
+                <button
+                  key={`ttc-${hex || 'auto'}`}
+                  type="button"
+                  onClick={() => {
+                    applyTopicTextStyle({ color: hex || undefined });
+                    setOpenPicker(null);
+                  }}
+                  className={`flex h-4 w-4 items-center justify-center rounded-full border text-[8px] font-bold text-zinc-400 transition hover:scale-125 ${
+                    resolvedTextStyle.color === hex ? 'scale-110 border-white' : 'border-zinc-700'
+                  }`}
+                  style={hex ? { backgroundColor: hex } : undefined}
+                  title={hex ? `Cor ${hex}` : 'Cor automática'}
+                >
+                  {!hex && 'A'}
+                </button>
+              ))}
+              <input
+                type="color"
+                value={effectiveTextColor}
+                onChange={(e) => applyTopicTextStyle({ color: e.target.value })}
+                className="h-4 w-4 cursor-pointer rounded border-0 bg-transparent p-0"
+                title="Cor personalizada"
+              />
+            </SmartFloatingPopover>
           </div>
 
           {/* Alternar Caixa (Normal -> MAIÚSCULAS -> Capitalizado) */}

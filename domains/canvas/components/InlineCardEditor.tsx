@@ -42,7 +42,9 @@ import {
   List,
   Palette,
 } from 'lucide-react';
-import { FullKnowledgeCard } from '@/domains/knowledge/types';
+import { CardTitleStyle, FullKnowledgeCard } from '@/domains/knowledge/types';
+import { hexToRgbaString } from '../utils/contrast';
+import { SmartFloatingPopover } from './SmartFloatingPopover';
 import { DEFAULT_CARD_TYPOGRAPHY, resolveCardCallout, resolveCardTitleStyle } from '@/domains/knowledge/utils/defaults';
 import { getKnowledgeRepository } from '@/infrastructure/persistence/repositoryFactory';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
@@ -114,9 +116,14 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
   const { addToast, theme } = useUiStore();
 
   const [fullCard, setFullCard] = useState<FullKnowledgeCard | null>(null);
+  const [activeField, setActiveField] = useState<'title' | 'body'>('body');
   const [openPopover, setOpenPopover] = useState<null | 'highlight' | 'color' | 'link'>(null);
   const [linkQuery, setLinkQuery] = useState('');
   const [newTag, setNewTag] = useState('');
+
+  const highlightBtnRef = useRef<HTMLButtonElement>(null);
+  const colorBtnRef = useRef<HTMLButtonElement>(null);
+  const linkBtnRef = useRef<HTMLButtonElement>(null);
 
   const fullCardRef = useRef<FullKnowledgeCard | null>(null);
   fullCardRef.current = fullCard;
@@ -215,6 +222,9 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
         return false;
       },
     },
+    onFocus: () => {
+      setActiveField('body');
+    },
     onUpdate: ({ editor: ed }) => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
@@ -253,6 +263,21 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
 
   const typoStyle = buildTypographyCssVars(meta.typography, DEFAULT_CARD_TYPOGRAPHY);
   const calloutConfig = resolveCardCallout(meta);
+  const isEditingTitle = activeField === 'title';
+
+  const patchTitleStyle = (patch: Partial<CardTitleStyle>) => {
+    const resolved = resolveCardTitleStyle(meta);
+    updateCardMeta(cardId, {
+      titleStyle: {
+        ...resolved,
+        color: resolved.color || undefined,
+        bgColor: resolved.bgColor || undefined,
+        underlineColor: resolved.underlineColor || undefined,
+        highlightColor: resolved.highlightColor || undefined,
+        ...patch,
+      },
+    });
+  };
   const titleStyle = resolveCardTitleStyle(meta);
   const titleProps = buildCardTitleRenderProps(titleStyle);
 
@@ -309,15 +334,110 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
 
           <div className="mx-0.5 h-4 w-px bg-zinc-800" />
 
-          <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={`rounded-lg p-1.5 ${editor.isActive('bold') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Negrito"><Bold className="h-3.5 w-3.5" /></button>
-          <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={`rounded-lg p-1.5 ${editor.isActive('italic') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Itálico"><Italic className="h-3.5 w-3.5" /></button>
-          <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={`rounded-lg p-1.5 ${editor.isActive('underline') ? 'bg-indigo-600 text-white' : 'text-zinc-300 hover:bg-zinc-800'}`} title="Sublinhado"><UnderlineIcon className="h-3.5 w-3.5" /></button>
-          <StudyUnderlinePicker editor={editor} />
-          <StudyFontPicker editor={editor} />
+          {isEditingTitle && (
+            <span className="mr-0.5 rounded-md bg-indigo-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-300">
+              Título
+            </span>
+          )}
 
-          {/* Tipografia (Fonte, Entrelinha e Parágrafos) */}
+          <button
+            type="button"
+            onClick={() => {
+              if (isEditingTitle) {
+                patchTitleStyle({
+                  fontWeight: titleStyle.fontWeight === 'bold' ? 'normal' : 'bold',
+                });
+              } else {
+                editor.chain().focus().toggleBold().run();
+              }
+            }}
+            className={`rounded-lg p-1.5 ${
+              (isEditingTitle ? titleStyle.fontWeight === 'bold' : editor.isActive('bold'))
+                ? 'bg-indigo-600 text-white'
+                : 'text-zinc-300 hover:bg-zinc-800'
+            }`}
+            title="Negrito"
+          >
+            <Bold className="h-3.5 w-3.5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (isEditingTitle) {
+                patchTitleStyle({ italic: !titleStyle.italic });
+              } else {
+                editor.chain().focus().toggleItalic().run();
+              }
+            }}
+            className={`rounded-lg p-1.5 ${
+              (isEditingTitle ? titleStyle.italic : editor.isActive('italic'))
+                ? 'bg-indigo-600 text-white'
+                : 'text-zinc-300 hover:bg-zinc-800'
+            }`}
+            title="Itálico"
+          >
+            <Italic className="h-3.5 w-3.5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (isEditingTitle) {
+                patchTitleStyle({ underline: !titleStyle.underline });
+              } else {
+                editor.chain().focus().toggleUnderline().run();
+              }
+            }}
+            className={`rounded-lg p-1.5 ${
+              (isEditingTitle ? titleStyle.underline : editor.isActive('underline'))
+                ? 'bg-indigo-600 text-white'
+                : 'text-zinc-300 hover:bg-zinc-800'
+            }`}
+            title="Sublinhado"
+          >
+            <UnderlineIcon className="h-3.5 w-3.5" />
+          </button>
+
+          {isEditingTitle ? (
+            <StudyUnderlinePicker
+              active={titleStyle.underline && titleStyle.underlineStyle !== 'solid'}
+              valueVariant={
+                titleStyle.underlineStyle !== 'solid' ? titleStyle.underlineStyle : 'brush'
+              }
+              valueColor={titleStyle.underlineColor || undefined}
+              onApplyStyle={(variant, color) =>
+                patchTitleStyle({
+                  underline: true,
+                  underlineStyle: variant,
+                  underlineColor: color,
+                })
+              }
+              onClearStyle={() =>
+                patchTitleStyle({
+                  underline: false,
+                  underlineStyle: 'solid',
+                  underlineColor: undefined,
+                })
+              }
+            />
+          ) : (
+            <StudyUnderlinePicker editor={editor} />
+          )}
+
+          {isEditingTitle ? (
+            <StudyFontPicker
+              valueFontId={titleStyle.fontFamily}
+              onSelectFont={(fontFamily) => patchTitleStyle({ fontFamily })}
+            />
+          ) : (
+            <StudyFontPicker editor={editor} />
+          )}
+
+          {/* Tipografia (Fonte, Entrelinha e Parágrafos) — abre já na aba do campo focado */}
           <TypographyPopover
             compact
+            defaultTab={activeField}
             value={meta.typography}
             defaults={DEFAULT_CARD_TYPOGRAPHY}
             onChange={(next) => updateCardMeta(cardId, { typography: next })}
@@ -329,32 +449,122 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
 
           {/* Marca-texto */}
           <div className="relative">
-            <button type="button" onClick={() => setOpenPopover(openPopover === 'highlight' ? null : 'highlight')} className={`rounded-lg p-1.5 ${editor.isActive('highlight') ? 'bg-amber-500/20 text-amber-300' : 'text-amber-300 hover:bg-zinc-800'}`} title="Marca-texto">
+            <button
+              ref={highlightBtnRef}
+              type="button"
+              onClick={() => setOpenPopover(openPopover === 'highlight' ? null : 'highlight')}
+              className={`rounded-lg p-1.5 ${
+                (isEditingTitle ? Boolean(titleStyle.highlightColor) : editor.isActive('highlight'))
+                  ? 'bg-amber-500/20 text-amber-300'
+                  : 'text-amber-300 hover:bg-zinc-800'
+              }`}
+              title="Marca-texto"
+            >
               <Highlighter className="h-3.5 w-3.5" />
             </button>
-            {openPopover === 'highlight' && (
-              <div className="absolute left-0 top-full z-50 mt-2 flex items-center gap-1 rounded-xl border border-zinc-800 bg-[#161920] p-1.5 shadow-2xl">
-                {QUICK_HIGHLIGHTS.map((hex) => (
-                  <button key={hex} type="button" onClick={() => { editor.chain().focus().toggleHighlight({ color: hex }).run(); setOpenPopover(null); }} className="h-4 w-4 rounded border border-zinc-700 hover:scale-125" style={{ backgroundColor: hex }} />
-                ))}
-                <button type="button" onClick={() => { editor.chain().focus().unsetHighlight().run(); setOpenPopover(null); }} className="rounded bg-zinc-800 px-1 text-[10px] text-zinc-300">✕</button>
-              </div>
-            )}
+            <SmartFloatingPopover
+              open={openPopover === 'highlight'}
+              anchorRef={highlightBtnRef}
+              onClose={() => setOpenPopover(null)}
+              estimatedHeight={48}
+              className="flex items-center gap-1 rounded-xl border border-zinc-800 bg-[#161920]/98 p-1.5 shadow-2xl backdrop-blur-xl"
+            >
+              {QUICK_HIGHLIGHTS.map((hex) => (
+                <button
+                  key={hex}
+                  type="button"
+                  onClick={() => {
+                    if (isEditingTitle) {
+                      patchTitleStyle({ highlightColor: hexToRgbaString(hex, 0.36) });
+                    } else {
+                      editor.chain().focus().toggleHighlight({ color: hex }).run();
+                    }
+                    setOpenPopover(null);
+                  }}
+                  className="h-4 w-4 rounded border border-zinc-700 hover:scale-125"
+                  style={{ backgroundColor: hex }}
+                />
+              ))}
+              <button
+                type="button"
+                onClick={() => {
+                  if (isEditingTitle) {
+                    patchTitleStyle({ highlightColor: undefined });
+                  } else {
+                    editor.chain().focus().unsetHighlight().run();
+                  }
+                  setOpenPopover(null);
+                }}
+                className="rounded bg-zinc-800 px-1 text-[10px] text-zinc-300"
+              >
+                ✕
+              </button>
+            </SmartFloatingPopover>
           </div>
 
           {/* Cor do texto */}
           <div className="relative">
-            <button type="button" onClick={() => setOpenPopover(openPopover === 'color' ? null : 'color')} className="rounded-lg p-1.5 text-zinc-300 hover:bg-zinc-800" title="Cor do texto">
+            <button
+              ref={colorBtnRef}
+              type="button"
+              onClick={() => setOpenPopover(openPopover === 'color' ? null : 'color')}
+              className={`rounded-lg p-1.5 ${
+                isEditingTitle && titleStyle.color
+                  ? 'bg-indigo-600/25 text-indigo-200'
+                  : 'text-zinc-300 hover:bg-zinc-800'
+              }`}
+              title="Cor do texto"
+            >
               <Palette className="h-3.5 w-3.5" />
             </button>
-            {openPopover === 'color' && (
-              <div className="absolute left-0 top-full z-50 mt-2 flex items-center gap-1 rounded-xl border border-zinc-800 bg-[#161920] p-1.5 shadow-2xl">
-                {QUICK_TEXT_COLORS.map((hex) => (
-                  <button key={hex} type="button" onClick={() => { editor.chain().focus().setColor(hex).run(); setOpenPopover(null); }} className="h-4 w-4 rounded-full border border-zinc-700 hover:scale-125" style={{ backgroundColor: hex }} />
-                ))}
-                <button type="button" onClick={() => { editor.chain().focus().unsetColor().run(); setOpenPopover(null); }} className="rounded bg-zinc-800 px-1 text-[10px] text-zinc-300">✕</button>
-              </div>
-            )}
+            <SmartFloatingPopover
+              open={openPopover === 'color'}
+              anchorRef={colorBtnRef}
+              onClose={() => setOpenPopover(null)}
+              estimatedHeight={48}
+              className="flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-[#161920]/98 p-1.5 shadow-2xl backdrop-blur-xl"
+            >
+              {QUICK_TEXT_COLORS.map((hex) => (
+                <button
+                  key={hex}
+                  type="button"
+                  onClick={() => {
+                    if (isEditingTitle) {
+                      patchTitleStyle({ color: hex });
+                    } else {
+                      editor.chain().focus().setColor(hex).run();
+                    }
+                    setOpenPopover(null);
+                  }}
+                  className="h-4 w-4 rounded-full border border-zinc-700 hover:scale-125"
+                  style={{ backgroundColor: hex }}
+                />
+              ))}
+              <input
+                type="color"
+                value={titleStyle.color || '#ffffff'}
+                onChange={(e) => {
+                  if (isEditingTitle) patchTitleStyle({ color: e.target.value });
+                  else editor.chain().focus().setColor(e.target.value).run();
+                }}
+                className="h-4 w-4 cursor-pointer rounded border-0 bg-transparent p-0"
+                title="Cor personalizada"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (isEditingTitle) {
+                    patchTitleStyle({ color: undefined });
+                  } else {
+                    editor.chain().focus().unsetColor().run();
+                  }
+                  setOpenPopover(null);
+                }}
+                className="rounded bg-zinc-800 px-1 text-[10px] text-zinc-300"
+              >
+                ✕
+              </button>
+            </SmartFloatingPopover>
           </div>
 
           {/* Fita de Ocultação */}
@@ -382,35 +592,57 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
 
           {/* Link Interno [[Card]] */}
           <div className="relative">
-            <button type="button" onClick={() => { setLinkQuery(''); setOpenPopover(openPopover === 'link' ? null : 'link'); }} className="rounded-lg p-1.5 text-sky-300 hover:bg-sky-500/15" title="Conectar outro Card">
+            <button
+              ref={linkBtnRef}
+              type="button"
+              onClick={() => {
+                setLinkQuery('');
+                setOpenPopover(openPopover === 'link' ? null : 'link');
+              }}
+              className="rounded-lg p-1.5 text-sky-300 hover:bg-sky-500/15"
+              title="Conectar outro Card"
+            >
               <Link2 className="h-3.5 w-3.5" />
             </button>
-            {openPopover === 'link' && (
-              <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-xl border border-zinc-800 bg-[#161920] p-2 shadow-2xl">
-                <input
-                  autoFocus
-                  value={linkQuery}
-                  onChange={(e) => setLinkQuery(e.target.value)}
-                  placeholder="Buscar card..."
-                  className="mb-1.5 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 focus:border-indigo-500 focus:outline-none"
-                />
-                <div className="max-h-40 space-y-0.5 overflow-y-auto">
-                  {linkableCards.map((target) => (
-                    <button
-                      key={target.id}
-                      type="button"
-                      onClick={() => {
-                        editor.chain().focus().insertContent({ type: 'wikiLink', attrs: { cardId: target.id, label: target.title } }).run();
-                        setOpenPopover(null);
-                      }}
-                      className="block w-full truncate rounded-lg px-2 py-1 text-left text-xs text-zinc-200 hover:bg-indigo-600/20"
-                    >
-                      {target.title}
-                    </button>
-                  ))}
-                </div>
+            <SmartFloatingPopover
+              open={openPopover === 'link'}
+              anchorRef={linkBtnRef}
+              onClose={() => setOpenPopover(null)}
+              width={228}
+              estimatedHeight={200}
+              align="right"
+              className="rounded-xl border border-zinc-800 bg-[#161920]/98 p-2 shadow-2xl backdrop-blur-xl"
+            >
+              <input
+                autoFocus
+                value={linkQuery}
+                onChange={(e) => setLinkQuery(e.target.value)}
+                placeholder="Buscar card..."
+                className="mb-1.5 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 focus:border-indigo-500 focus:outline-none"
+              />
+              <div className="max-h-40 space-y-0.5 overflow-y-auto">
+                {linkableCards.map((target) => (
+                  <button
+                    key={target.id}
+                    type="button"
+                    onClick={() => {
+                      editor
+                        .chain()
+                        .focus()
+                        .insertContent({
+                          type: 'wikiLink',
+                          attrs: { cardId: target.id, label: target.title },
+                        })
+                        .run();
+                      setOpenPopover(null);
+                    }}
+                    className="block w-full truncate rounded-lg px-2 py-1 text-left text-xs text-zinc-200 hover:bg-indigo-600/20"
+                  >
+                    {target.title}
+                  </button>
+                ))}
               </div>
-            )}
+            </SmartFloatingPopover>
           </div>
 
           <div className="mx-0.5 h-4 w-px bg-zinc-800" />
@@ -445,6 +677,7 @@ export function InlineCardEditor({ cardId, onFinish, onOpenDetails }: InlineCard
       <div style={titleProps.wrapperStyle} className={`mb-1.5 w-full ${titleProps.wrapperClassName}`}>
         <input
           value={meta.title}
+          onFocus={() => setActiveField('title')}
           onChange={(e) => updateCardMeta(cardId, { title: e.target.value })}
           placeholder="Título do Card..."
           style={titleProps.textStyle}

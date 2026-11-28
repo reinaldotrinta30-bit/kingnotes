@@ -70,6 +70,7 @@ import {
   Pencil,
   FolderTree,
   ChevronRight,
+  Sticker,
   X,
 } from 'lucide-react';
 import { useKnowledgeStore } from '@/domains/knowledge/store/useKnowledgeStore';
@@ -106,6 +107,7 @@ import {
   syncActiveProjectionOffsets,
 } from '../utils/panoramaLayout';
 import { EditableEdge } from './EditableEdge';
+import { StickerLibraryPanel } from './StickerLibraryPanel';
 import { OutlineEditorView } from './OutlineEditorView';
 import { DrawingLayer } from './DrawingLayer';
 import { computeMultiAxisLayout, LayoutDirection } from '../utils/autoLayout';
@@ -259,6 +261,7 @@ function CanvasInner() {
   const [liveViewport, setLiveViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 });
   const [openHeaderMenu, setOpenHeaderMenu] = useState<null | 'layout' | 'edge' | 'spotlight'>(null);
   const [isContextMenuOpen, setIsContextMenuOpen] = useState(false);
+  const [isStickerPanelOpen, setIsStickerPanelOpen] = useState(false);
 
   const [globalEdgeType, setGlobalEdgeType] = useState<CanvasEdgePathType>('smoothstep');
   const [globalAnimated, setGlobalAnimated] = useState(false);
@@ -516,6 +519,41 @@ function CanvasInner() {
       addToast({ message: 'Imagem adicionada ao Canvas — você pode redimensionar e conectar!', variant: 'success' }, 2800);
     },
     [addToast, pushHistorySnapshot, screenToFlowPosition, getSmartViewportPos, createCanvasImage]
+  );
+
+  // Insere adesivo/elemento SVG (StarNote ou Iconify) salvo 100% offline no IndexedDB
+  const insertSvgElementToCanvas = useCallback(
+    async ({
+      svg,
+      width,
+      height,
+      caption,
+    }: {
+      svg: string;
+      width: number;
+      height: number;
+      caption: string;
+    }) => {
+      pushHistorySnapshot();
+      const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+      const blobId = `canvas-sticker-${crypto.randomUUID()}`;
+      await getKnowledgeRepository().saveBlob(blobId, blob);
+
+      const pos = getSmartViewportPos(width, height);
+      await createCanvasImage({
+        x: pos.x,
+        y: pos.y,
+        blobId,
+        width,
+        height,
+        caption,
+        borderStyle: 'none',
+        keepAspectRatio: true,
+      });
+
+      addToast({ message: `Elemento "${caption}" inserido no Canvas`, variant: 'success' }, 2200);
+    },
+    [pushHistorySnapshot, getSmartViewportPos, createCanvasImage, addToast]
   );
 
   const panorama = useMemo(() => {
@@ -1178,6 +1216,11 @@ function CanvasInner() {
         return;
       }
 
+      if (e.key === 'Escape' && isStickerPanelOpen) {
+        setIsStickerPanelOpen(false);
+        return;
+      }
+
       if (e.key === 'Escape' && selectedEdgeLabelId) {
         setSelectedEdgeLabelId(null);
         return;
@@ -1268,6 +1311,7 @@ function CanvasInner() {
     editingEdgeLabelId,
     isLocked,
     isPlacingText,
+    isStickerPanelOpen,
     isDrawingMode,
     selectedEdgeLabelId,
     setSelectedEdgeLabelId,
@@ -4164,15 +4208,32 @@ function CanvasInner() {
                 <ImagePlus className="h-3.5 w-3.5 text-sky-400" /> Imagem
               </button>
               <button
+                onClick={() => setIsStickerPanelOpen((v) => !v)}
+                className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs transition ${
+                  isStickerPanelOpen
+                    ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40'
+                    : 'text-zinc-300 hover:bg-zinc-800'
+                }`}
+                title="Adesivos, fitas washi, selos e biblioteca universal de ícones"
+              >
+                <Sticker className="h-3.5 w-3.5 text-amber-400" /> Elementos
+              </button>
+              <button
                 onClick={handleCreateQuickGroup}
                 className="flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs text-zinc-300 transition hover:bg-zinc-800"
               >
-                <FolderPlus className="h-3.5 w-3.5 text-indigo-400" /> Novo Grupo
+                <FolderPlus className="h-3.5 w-3.5 text-indigo-400" /> Grupo
               </button>
             </div>
           </Panel>
         )}
       </ReactFlow>
+
+      <StickerLibraryPanel
+        isOpen={isStickerPanelOpen}
+        onClose={() => setIsStickerPanelOpen(false)}
+        onInsertSvg={insertSvgElementToCanvas}
+      />
 
       <DrawingLayer
         isActive={isDrawingMode}

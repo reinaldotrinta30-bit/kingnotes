@@ -139,6 +139,8 @@ interface KnowledgeState {
     width: number;
     height: number;
     caption?: string;
+    borderStyle?: CanvasNodePosition['borderStyle'];
+    keepAspectRatio?: boolean;
   }) => Promise<string | null>;
   updateCanvasNode: (nodeId: string, patch: Partial<CanvasNodePosition>) => Promise<void>;
   createCanvasText: (params: {
@@ -1587,7 +1589,16 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     return group.id;
   },
 
-  createCanvasImage: async ({ x, y, blobId, width, height, caption = '' }) => {
+  createCanvasImage: async ({
+    x,
+    y,
+    blobId,
+    width,
+    height,
+    caption = '',
+    borderStyle = 'solid',
+    keepAspectRatio = false,
+  }) => {
     const state = get();
     const workspaceId = state.activeWorkspaceId;
     if (!workspaceId) return null;
@@ -1601,10 +1612,11 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       ...scope,
       blobId,
       caption,
-      borderStyle: 'solid',
+      borderStyle,
       borderWidth: 'thin',
       color: '#3f3f46',
       imageFit: 'contain',
+      keepAspectRatio,
       x: Math.round(x),
       y: Math.round(y),
       width: Math.round(width),
